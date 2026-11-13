@@ -1,3 +1,4 @@
+import { DEFAULT_LYSN_SOUND } from "./default-notification-sounds";
 import type { PhotoStorySnapshot } from "./photo-story-data";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 
@@ -21,6 +22,7 @@ export type LysnProfile = { name: string; avatar: string; cover?: string; bio?: 
 export type LysnUserProfile = { name: string; avatar: string; cover: string; birthday: string; gender: string; stickers?: LysnSticker[]; stickerPacks?: LysnStickerPack[] };
 export type LysnSettings = {
   notificationSound?: string;
+  notificationSoundEnabled?: boolean;
   notificationsEnabled: boolean; fontSize: "small" | "normal" | "large";
   enterToSend: boolean; translationMode: "replace" | "fold";
   autonomousMessages: boolean; deepRealism: boolean;
@@ -48,6 +50,7 @@ export type LysnRoom = {
   identityMatchedAt?: number;
 };
 export const DEFAULT_LYSN_SETTINGS: LysnSettings = {
+  notificationSound: DEFAULT_LYSN_SOUND, notificationSoundEnabled: true,
   notificationsEnabled: true, fontSize: "normal", enterToSend: true,
   translationMode: "fold", autonomousMessages: true, deepRealism: false, testMode: false,
 };
@@ -75,7 +78,7 @@ export function loadLysn(): LysnState {
       lastAutoAt: parsed.lastAutoAt && typeof parsed.lastAutoAt === "object" ? parsed.lastAutoAt : {},
       rooms: parsed.rooms && typeof parsed.rooms === "object" ? parsed.rooms : {},
       userProfile: { name: parsed.userProfile?.name || "我", avatar: parsed.userProfile?.avatar || "", cover: parsed.userProfile?.cover || "", birthday: parsed.userProfile?.birthday || "", gender: parsed.userProfile?.gender || "", stickers: Array.isArray(parsed.userProfile?.stickers) ? parsed.userProfile.stickers.filter(s => s && typeof s.id === "string" && typeof s.name === "string" && typeof s.imageUrl === "string") : [], stickerPacks: Array.isArray(parsed.userProfile?.stickerPacks) ? parsed.userProfile.stickerPacks : undefined },
-      settings: { ...DEFAULT_LYSN_SETTINGS, ...Object.fromEntries(Object.entries(parsed.settings || {}).filter(([key]) => key !== "translationApiUrl" && key !== "translationApiKey")) },
+      settings: { ...DEFAULT_LYSN_SETTINGS, ...Object.fromEntries(Object.entries(parsed.settings || {}).filter(([key]) => key !== "translationApiUrl" && key !== "translationApiKey")), notificationSound: parsed.settings?.notificationSound?.trim() || DEFAULT_LYSN_SOUND },
     };
   } catch { return empty(); }
 }

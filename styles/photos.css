@@ -1034,3 +1034,5 @@
 .photos-album-create .photos-edit-row>span{font-size:11px;color:#85858c}.photos-album-create .photos-edit-row input{width:100%;min-width:0;flex:1;padding:10px;border-radius:7px;background:#eaeaec}
 .photos-album-create .photos-organize-actions{margin:18px 0 0;padding:0;flex-shrink:0;gap:4px}
 .photos-album-create .photos-organize-actions>button{padding:10px 14px;border-radius:7px;background:#e1e9f3;color:#537ca3}
+
+.photos-generation-prompt { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.6; }

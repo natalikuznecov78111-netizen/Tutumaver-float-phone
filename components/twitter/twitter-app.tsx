@@ -23,7 +23,7 @@ import type { Character } from "@/lib/character-types";
 import { resolveUserIdentity } from "@/lib/settings-storage";
 import { getChatImageFromIndexedDB, saveChatImageToIndexedDB } from "@/lib/chat-asset-storage";
 import { appendPhotoRecords, createPhotoId, loadPhotoLibrary } from "@/lib/photo-library-storage";
-import { generateImageFromConfiguredApi } from "@/lib/image-generation-service";
+import { generateImageFromConfiguredApi, type ImageGenerationResult } from "@/lib/image-generation-service";
 import { recordPreparedPhotoUse, resolveMediaForUse } from "@/lib/media-resolver";
 import { generateTwitterText, type TwitterGeneratedLine, type TwitterCommentDraft } from "@/lib/twitter-engine";
 import { generateTwitterComments, generateTwitterCommunityText, generateTwitterDelayedReply, generateTwitterStrangerDms, generateTwitterStrangerReply, generateTwitterTrends, generateTwitterWorldBatch, translateTwitterLegacy, type TwitterWorldComment } from "@/lib/twitter-world-engine";
@@ -150,7 +150,7 @@ export function TwitterApp({ onClose, onNotice: externalNotice }: Props) {
   const [textImagePostId, setTextImagePostId] = useState<string | null>(null);
   const [imagePrompt, setImagePrompt] = useState("");
   const [textImageDescription, setTextImageDescription] = useState("");
-  const [generatedPreview, setGeneratedPreview] = useState<Blob | null>(null);
+  const [generatedPreview, setGeneratedPreview] = useState<ImageGenerationResult | null>(null);
   const [generatedPreviewUrl, setGeneratedPreviewUrl] = useState("");
   const [replyPermission, setReplyPermission] = useState<"everyone" | "following" | "mentioned">("everyone");
   const [pollEnabled, setPollEnabled] = useState(false);
@@ -449,14 +449,31 @@ export function TwitterApp({ onClose, onNotice: externalNotice }: Props) {
     try {
       const result = await generateImageFromConfiguredApi({ description: imagePrompt.trim(), appId: "twitter" });
       if (!result) throw new Error("请先配置并启用小手机的图片生成方案。");
-      setGeneratedPreview(result.blob);
+      setGeneratedPreview(result);
       setGeneratedPreviewUrl(result.dataUrl);
     } catch (error) { alert(error instanceof Error ? `生成失败：${error.message}` : "图片生成失败。"); }
     finally { finishGeneration(); }
   };
   const attachGeneratedImage = async (addToPost = true) => {
     if (!generatedPreview) return;
-    try { const ref = await saveChatImageToIndexedDB(generatedPreview); const now = Date.now(); appendPhotoRecords([{ id: createPhotoId(), assetId: ref, originalName: `X-image-${now}.png`, linkedCharacterIds: [], sharedPairIds: [], aiUsable: false, visionStatus: "unprocessed", usageHistory: [], origin: "generated", sourceAppId: "twitter", sourceAccountId: activeAccount.endsWith(":alt") ? activeAccount : undefined, createdAt: now, updatedAt: now }]); if (addToPost && textImagePostId) commit(current => ({ ...current, posts: current.posts.map(post => post.id === textImagePostId ? { ...post, imageRef: ref, imageDescription: undefined } : post) })); else if (addToPost && replyTextImageEditor) {setReplyImages(current=>[...current,ref].slice(0,4));setReplyTextImageEditor(false);}else if (addToPost) setImageRefs(current => [...current, ref].slice(0, 4)); else alert("已保存到相册。"); setImagePromptOpen(false); setTextImagePostId(null); setGeneratedPreview(null); setGeneratedPreviewUrl(""); }
+    try {
+      const ref = await saveChatImageToIndexedDB(generatedPreview.blob);
+      const now = Date.now();
+      appendPhotoRecords([{
+        id: createPhotoId(), assetId: ref, originalName: `X-image-${now}.png`,
+        linkedCharacterIds: [], sharedPairIds: [], aiUsable: false, visionStatus: "unprocessed", usageHistory: [],
+        origin: "generated", generationPrompt: generatedPreview.prompt, sourceAppId: "twitter",
+        sourceAccountId: activeAccount.endsWith(":alt") ? activeAccount : undefined, createdAt: now, updatedAt: now,
+      }]);
+      if (addToPost && textImagePostId) commit(current => ({ ...current, posts: current.posts.map(post => post.id === textImagePostId ? { ...post, imageRef: ref, imageDescription: undefined } : post) }));
+      else if (addToPost && replyTextImageEditor) { setReplyImages(current => [...current, ref].slice(0, 4)); setReplyTextImageEditor(false); }
+      else if (addToPost) setImageRefs(current => [...current, ref].slice(0, 4));
+      else alert("已保存到相册。");
+      setImagePromptOpen(false);
+      setTextImagePostId(null);
+      setGeneratedPreview(null);
+      setGeneratedPreviewUrl("");
+    }
     catch { alert("保存图片失败。"); }
   };
   const publish = () => {

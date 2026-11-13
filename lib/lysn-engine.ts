@@ -13,7 +13,7 @@ import { lysnPublicBoundary } from "./lysn-identity";
 import { lysnPublicContinuityPrompt } from "./lysn-cross-app-context";
 import { loadPhotoLibrary } from "./photo-library-storage";
 import { getPhotoSourceStrategy } from "./photo-library-resolver";
-import { canAutoUsePhoto } from "./photo-library-usage";
+import { canAutoUsePhoto, hasPhotoMatchDescription } from "./photo-library-usage";
 
 export type GeneratedLysn = {
   kind: "text" | "photo" | "voice" | "sticker";
@@ -48,7 +48,7 @@ export async function generateLysn(characterId: string, history: LysnMessage[], 
   const album = loadPhotoLibrary();
   const imported = album.preferences.enabledCharacterIds.includes(characterId);
   const photoStrategy = imported ? getPhotoSourceStrategy("bubble") : "generated_only";
-  const photoChoices = imported ? album.photos.filter(p => p.linkedCharacterIds.includes(characterId) && p.aiUsable && p.visionStatus === "done" && canAutoUsePhoto(p, characterId, "bubble")).slice(-20) : [];
+  const photoChoices = album.photos.filter(p => (imported || p.origin === "generated") && p.linkedCharacterIds.includes(characterId) && p.aiUsable && hasPhotoMatchDescription(p) && canAutoUsePhoto(p, characterId, "bubble")).slice(-20);
   // There is no private Chat history or Chat user identity in this prompt.
   const calendar=lysnCalendarContext(characterId);
   if((mode==="new"||mode==="reply")&&(!loadLysn().subscribedIds.includes(characterId)||!calendar.canSend))return [];
@@ -81,7 +81,7 @@ export async function generateLysn(characterId: string, history: LysnMessage[], 
     quoteTest && quotedFan ? `这轮粉丝明确要求测试引用。请引用这条已存在的匿名留言并自然回复，不要编造另一条替代：${quotedFan.original.slice(0, 300)}。只引用文字，不暴露发言者身份；本轮 publish=true，至少一条消息。` : mayQuote ? "如果自然合适，可以先模拟一条匿名粉丝留言并引用它，然后再作公开回复。quote 必须有 original 和 translated，两者分别是模拟留言原文和中文翻译。引用只存在于艺人消息里，不要把模拟留言当作用户发言。" : "这轮不要引用粉丝留言，也不要输出 quote。",
     profilePrompt || "这次不修改资料；即使对话提到了昵称或头像，也不要输出 profileUpdate。你可以自然问问大家的意见。",
     stickers.length ? `本聊天室可发送表情包的名称：${stickers.map(s => s.name).join("、")}。发送时 kind=sticker 且 stickerName 严格使用列表中某个名称，original 填该名称。` : "没有配置表情包，不要发送表情包。",
-    photoChoices.length ? `这是已关联到你且可用的相册候选：${photoChoices.map(p => `${p.id}：${[p.subject, p.visionSummary, ...(p.visionTags || [])].filter(Boolean).join("、").slice(0, 95) || "未填写内容"}`).join("；")}。画面符合时填写准确 photoId；否则填写具体 photoDescription 与 mediaIntent。缺图只发文字图片描述，等待用户手动生图。多张 photo 连排，说话另发 text。` : photoStrategy === "album_only" ? "没有可用相册照片，不能假装发了照片。" : "暂无可用相册照片，可发送文字图片描述，之后由用户手动决定是否生图。",
+    photoChoices.length ? `这是已关联到你且可用的相册候选：${photoChoices.map(p => `${p.id}：${(p.generationPrompt || [p.subject, p.visionSummary, ...(p.visionTags || [])].filter(Boolean).join("、")).slice(0, 95) || "未填写内容"}`).join("；")}。画面符合时填写准确 photoId；否则填写具体 photoDescription 与 mediaIntent。缺图只发文字图片描述，等待用户手动生图。多张 photo 连排，说话另发 text。` : photoStrategy === "album_only" ? "没有可用相册照片，不能假装发了照片。" : "暂无可用相册照片，可发送文字图片描述，之后由用户手动决定是否生图。",
     photoRequest ? "匿名粉丝正在请求照片。你可以按人设决定发或不发；若明确说照片已经发出，必须输出 kind=photo 并填写画面描述，允许相册或生图。" : "",
     multiplePhotosRequested ? "若愿意发多张，连续输出 2 至 4 条不同画面的 photo，每张独立选择相册或生图，最后再用单独的 text 说话。" : "",
     voiceTest ? "测试模式：用户明确要求语音，本轮至少一条 kind=voice，original 是你本人的语言逐字稿。" : "",

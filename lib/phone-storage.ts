@@ -1,3 +1,4 @@
+import { DEFAULT_PHONE_RINGTONE } from "./default-notification-sounds";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 import { loadSms, saveSms, phoneFromPersona } from "./sms-storage";
 import { loadCharacters, saveCharacters } from "./character-storage";
@@ -15,6 +16,8 @@ export type PhoneTranscriptLine = {
   translated?: string;
   createdAt: number;
   audioRef?: string;
+  /** One manual summon generates one coherent reply batch. */
+  batchId?: string;
 };
 export type PhoneCallRecord = {
   id: string;
@@ -32,15 +35,15 @@ export type PhoneCallRecord = {
   transcript: PhoneTranscriptLine[];
   source?: "phone" | "chat" | "sms" | "system";
 };
-export type PhoneState = { version: 1; calls: PhoneCallRecord[]; ringtoneUrl?: string };
+export type PhoneState = { version: 1; calls: PhoneCallRecord[]; ringtoneUrl?: string; ringtoneEnabled?: boolean };
 
-const empty = (): PhoneState => ({ version: 1, calls: [], ringtoneUrl: "" });
+const empty = (): PhoneState => ({ version: 1, calls: [], ringtoneEnabled: true, ringtoneUrl: DEFAULT_PHONE_RINGTONE });
 export function loadPhoneState(): PhoneState {
   try {
     const raw = kvGet(PHONE_KEY);
     if (!raw) return empty();
     const parsed = JSON.parse(raw) as Partial<PhoneState>;
-    return { version: 1, calls: Array.isArray(parsed.calls) ? parsed.calls : [], ringtoneUrl: typeof parsed.ringtoneUrl === "string" ? parsed.ringtoneUrl : "" };
+    return { version: 1, ringtoneEnabled: parsed.ringtoneEnabled !== false, calls: Array.isArray(parsed.calls) ? parsed.calls : [], ringtoneUrl: typeof parsed.ringtoneUrl === "string" && parsed.ringtoneUrl.trim() ? parsed.ringtoneUrl : DEFAULT_PHONE_RINGTONE };
   } catch { return empty(); }
 }
 export function savePhoneState(state: PhoneState): void {

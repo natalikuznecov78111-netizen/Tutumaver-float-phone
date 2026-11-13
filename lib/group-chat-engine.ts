@@ -295,6 +295,8 @@ export type GroupChatPromptBuildOptions = {
     /** 本轮一次性导演指令：只影响本次群聊生成，不写入聊天历史或角色记忆。 */
     directorInstruction?: string;
     activeCall?: ActiveGroupCall;
+    /** One-time camera screenshot from an explicitly summoned group video call. */
+    attachedImages?: string[];
 };
 
 async function buildGroupChatPromptMessages(
@@ -869,6 +871,18 @@ export async function generateGroupChatCompletion(
         directorInstruction: options?.directorInstruction,
         activeCall: options?.activeCall,
     });
+    // A manually summoned video call may include one temporary camera frame.
+    // Only attach it when image recognition is explicitly enabled.
+    // Do not save this frame to the group message history.
+    if (config.enableImageRecognition === true && options?.attachedImages?.length) {
+        const frame = options.attachedImages[0];
+        if (/^data:image\//.test(frame)) {
+            llmMessages.push({ role: "user", content: [
+                { type: "text", text: "系统说明：这是用户在本次群视频通话主动召唤时截取的当前画面；仅据此描述实际可见的内容，不推断画面外的人或事件。" },
+                { type: "image_url", image_url: { url: frame, detail: "low" } },
+            ] });
+        }
+    }
     const chars = loadCharacters();
     const participantIds = session.participantIds || [];
 

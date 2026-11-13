@@ -27,6 +27,7 @@ import { ChatPluginManager } from "./chat-plugin-manager";
 import { ChatPluginPageBoundary } from "./chat-plugin-page-boundary";
 import { GlobalChatInfoSettings } from "./global-chat-info-settings";
 import { WalletPanel } from "./wallet-panel";
+import { useAppBack } from "@/lib/back-navigation";
 import { loadMomentsConfig, saveMomentsConfig, DEFAULT_MOMENTS_CONFIG, type MomentsInteractionConfig, getAllPosts } from "@/lib/moments-storage";
 import { loadChatContacts } from "@/lib/chat-storage";
 import { loadCharacters } from "@/lib/character-storage";
@@ -167,6 +168,8 @@ export function UserProfilePanel({ onClose, className }: UserProfilePanelProps) 
     const [showCSSEditor, setShowCSSEditor] = useState(false);
     const [showMomentsSettings, setShowMomentsSettings] = useState(false);
     const [showWalletPanel, setShowWalletPanel] = useState(false);
+    // Consume native back while Wallet is open; return to Chat More instead of closing Chat.
+    useAppBack(() => { window.dispatchEvent(new CustomEvent("chat-hide-tabbar", { detail: false })); setShowWalletPanel(false); }, () => showWalletPanel, 65);
     const [identity, setIdentity] = useState<UserIdentity | null>(null);
     const [notifEnabled, setNotifEnabled] = useState(false);
     const [notifHint, setNotifHint] = useState<string | null>(null);

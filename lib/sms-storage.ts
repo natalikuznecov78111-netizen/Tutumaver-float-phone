@@ -1,3 +1,4 @@
+import { DEFAULT_SMS_SOUND } from "./default-notification-sounds";
 import { kvGet, kvSet, registerKvMigration } from "./kv-db";
 
 export const SMS_KEY = "ai_phone_sms_v1";
@@ -10,14 +11,14 @@ export type SmsReaction = { id: string; emoji: string; by: "user" | "character" 
 export type SmsMessage = { id: string; threadId: string; direction: "outgoing" | "incoming"; original: string; translated?: string; createdAt: number; delivered: boolean; batchId?: string; awarenessAt?: SmsThread["awareness"]; reactions?: SmsReaction[] };
 export type SmsThread = { id: string; characterId: string; identityId: string; number: string; characterNumber: string; alias?: string; backgroundUrl?: string; blockedByMe: boolean; blockedByCharacter: boolean; awareness: "unknown" | "suspected" | "confirmed"; suspicion?: string; summary?: string; updatedAt: number; readAt: number };
 export const DEFAULT_SMS_EMOJI = ["❤️", "👍", "😂", "😮", "😢", "👀", "🔥", "🫶", "🐰", "🥺", "😍", "✨", "💀", "👏", "😡", "💕"];
-export type SmsState = { version: 1; contactAliases?: Record<string, string>; realNumber: string; characterNumbers: Record<string,string>; identities: SmsIdentity[]; threads: SmsThread[]; messages: SmsMessage[]; background: string; proactive: "off" | "on" | "rare" | "normal" | "often"; autoExpandTranslation: boolean; ringtoneUrl?: string; emojiChoices: string[]; lastAutoAt: Record<string,number>; contactAttempts: Record<string,number> };
-const empty = (): SmsState => ({ version: 1, realNumber: "", characterNumbers: {}, identities: [], threads: [], messages: [], background: "", proactive: "off", autoExpandTranslation: false, ringtoneUrl: "", emojiChoices: [...DEFAULT_SMS_EMOJI], lastAutoAt: {}, contactAttempts: {} });
+export type SmsState = { version: 1; contactAliases?: Record<string, string>; realNumber: string; characterNumbers: Record<string,string>; identities: SmsIdentity[]; threads: SmsThread[]; messages: SmsMessage[]; background: string; proactive: "off" | "on" | "rare" | "normal" | "often"; autoExpandTranslation: boolean; ringtoneUrl?: string; soundEnabled?: boolean; emojiChoices: string[]; lastAutoAt: Record<string,number>; contactAttempts: Record<string,number> };
+const empty = (): SmsState => ({ version: 1, realNumber: "", characterNumbers: {}, identities: [], threads: [], messages: [], background: "", proactive: "off", autoExpandTranslation: false, soundEnabled: true, ringtoneUrl: DEFAULT_SMS_SOUND, emojiChoices: [...DEFAULT_SMS_EMOJI], lastAutoAt: {}, contactAttempts: {} });
 export function loadSms(): SmsState {
   try {
     const raw = kvGet(SMS_KEY);
     if (!raw) return empty();
     const parsed = JSON.parse(raw) as Partial<SmsState>;
-    return { ...empty(), ...parsed, autoExpandTranslation: parsed.autoExpandTranslation === true, ringtoneUrl: typeof parsed.ringtoneUrl === "string" ? parsed.ringtoneUrl : "", emojiChoices: Array.isArray(parsed.emojiChoices) ? parsed.emojiChoices.filter((value): value is string => typeof value === "string" && value.length <= 32).slice(0, 80) : [...DEFAULT_SMS_EMOJI], characterNumbers: parsed.characterNumbers ?? {}, identities: Array.isArray(parsed.identities) ? parsed.identities : [], threads: Array.isArray(parsed.threads) ? parsed.threads : [], messages: Array.isArray(parsed.messages) ? parsed.messages : [], lastAutoAt: parsed.lastAutoAt ?? {}, contactAttempts: parsed.contactAttempts ?? {} };
+    return { ...empty(), ...parsed, autoExpandTranslation: parsed.autoExpandTranslation === true, ringtoneUrl: typeof parsed.ringtoneUrl === "string" && parsed.ringtoneUrl.trim() ? parsed.ringtoneUrl : DEFAULT_SMS_SOUND, emojiChoices: Array.isArray(parsed.emojiChoices) ? parsed.emojiChoices.filter((value): value is string => typeof value === "string" && value.length <= 32).slice(0, 80) : [...DEFAULT_SMS_EMOJI], characterNumbers: parsed.characterNumbers ?? {}, identities: Array.isArray(parsed.identities) ? parsed.identities : [], threads: Array.isArray(parsed.threads) ? parsed.threads : [], messages: Array.isArray(parsed.messages) ? parsed.messages : [], lastAutoAt: parsed.lastAutoAt ?? {}, contactAttempts: parsed.contactAttempts ?? {} };
   } catch { return empty(); }
 }
 export function saveSms(state: SmsState): void {

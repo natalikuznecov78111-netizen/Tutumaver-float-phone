@@ -55,7 +55,7 @@ import {
     updateChatCharacterProfile,
 } from "@/lib/chat-profile-storage";
 import { CharacterComputerPage } from "./character-computer-page";
-import { resolveUserIdentity, loadApiConfigs, loadBindingConfig, loadPresets, resolveBinding } from "@/lib/settings-storage";
+import { resolveUserIdentity, loadApiConfigs, loadBindingConfig, loadPresets, loadVoiceConfigs, getCharacterBinding, setCharacterBinding, saveBindingConfig, resolveBinding } from "@/lib/settings-storage";
 import { sendLLMRequest } from "@/lib/chat-engine";
 import { clearStatusRegionConfig, getStatusRegionConfig, hasOwnStatusRegionConfig, saveStatusRegionConfig, presetSupportsStatusRegion, isCustomStatusRegionActive, STATUS_REGION_SCHEME_TARGET, STATUS_REGION_UPDATED_EVENT, type StatusRegionConfig } from "@/lib/chat-status-region";
 import { downloadFile } from "@/lib/download-utils";
@@ -338,6 +338,31 @@ export function ChatSettingsPanel({
 }: ChatSettingsPanelProps) {
     const callPreferenceId = session.isGroup ? `group:${session.id}` : session.contactId;
     const [firstSpeaker, setFirstSpeaker] = useState(() => loadCallFirstSpeaker(callPreferenceId));
+    // Quick voice picker edits the existing per-character binding, not a Chat-only copy.
+    const [voiceBindingConfig, setVoiceBindingConfig] = useState(() => loadBindingConfig());
+    const [availableVoiceConfigs, setAvailableVoiceConfigs] = useState(() => loadVoiceConfigs());
+    useEffect(() => {
+        const refresh = () => {
+            setVoiceBindingConfig(loadBindingConfig());
+            setAvailableVoiceConfigs(loadVoiceConfigs());
+        };
+        refresh();
+        window.addEventListener("settings-bindings-updated", refresh);
+        return () => window.removeEventListener("settings-bindings-updated", refresh);
+    }, [session.contactId]);
+    const selectedCharacterVoiceId = getCharacterBinding(voiceBindingConfig, session.contactId).defaults.voiceConfigId || "";
+    const inheritedVoiceId = voiceBindingConfig.globalDefaults.voiceConfigId || "";
+    const inheritedVoiceName = availableVoiceConfigs.find(config => config.id === inheritedVoiceId)?.name || "未设置";
+    const bindCharacterVoice = (voiceId: string) => {
+        const current = loadBindingConfig();
+        const binding = getCharacterBinding(current, session.contactId);
+        const updated = setCharacterBinding(current, {
+            ...binding,
+            defaults: { ...binding.defaults, voiceConfigId: voiceId || undefined },
+        });
+        saveBindingConfig(updated);
+        setVoiceBindingConfig(updated);
+    };
     const [backgroundImage, setBackgroundImage] = useState<string>(session.backgroundImage || "");
     const [alias, setAlias] = useState<string>(session.alias || "");
     const [characterRemarkForUser, setCharacterRemarkForUser] = useState<string>(session.characterRemarkForUser || "");
@@ -1584,6 +1609,35 @@ export function ChatSettingsPanel({
 
                     </>
                 </div>
+
+                {/* 与「设置 → 配置绑定 → 角色绑定 → 语音 API」共用同一字段。 */}
+                {!session.isGroup && (
+                    <div className="menu-group">
+                        <label className="menu-item">
+                            <ChatInfoIcon icon={Mic} color={BINDING_ACCENTS.voice} />
+                            <div className="menu-label-group">
+                                <span className="menu-label">角色语音快捷绑定</span>
+                                <span className="menu-desc">从已添加的语音方案中选择，同步到配置绑定</span>
+                            </div>
+                            <select
+                                aria-label="角色语音快捷绑定"
+                                className="chat-user-voice-select"
+                                value={selectedCharacterVoiceId}
+                                onChange={event => bindCharacterVoice(event.target.value)}
+                            >
+                                <option value="">继承全局（{inheritedVoiceName}）</option>
+                                {availableVoiceConfigs.map(config => (
+                                    <option key={config.id} value={config.id}>
+                                        {config.name || config.provider || "未命名语音"}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                        {availableVoiceConfigs.length === 0 && (
+                            <div className="px-4 pb-3 ts-12 opacity-65">还没有语音方案，请先在设置中添加语音 API。</div>
+                        )}
+                    </div>
+                )}
 
                 {/* 角色专属提示音：私聊单独设置，优先于全局聊天信息 */}
                 {!session.isGroup && (

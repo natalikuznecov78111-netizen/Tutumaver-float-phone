@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useAppBack } from "@/lib/back-navigation";
 import type { ReactNode } from "react";
 import { BadgeCheck, ChevronRight, Heart, LoaderCircle, Play, Plus, Send, Square, Volume2, X } from "lucide-react";
 import type { WeverseLive } from "@/lib/weverse-storage";
@@ -64,6 +65,12 @@ export function WeverseLiveView({ isUserHost, isUserGuest, artistViewer, onLiveA
   const [draft, setDraft] = useState("");
   useEffect(() => { setDraft(""); setHostKind("speech"); }, [isUserHost]);
   const [exitSheetOpen, setExitSheetOpen] = useState(false);
+  const liveRootRef = useRef<HTMLDivElement>(null);
+  // Back gesture behaves like the Live close button rather than silently leaving.
+  useAppBack(() => {
+    if (exitSheetOpen) setExitSheetOpen(false);
+    else setExitSheetOpen(true);
+  }, () => live.status === "live" && !!liveRootRef.current?.getClientRects().length, 25);
   const [artistCommentsOpen, setArtistCommentsOpen] = useState(false);
   const [transcriptPinned, setTranscriptPinned] = useState(true);
   const [heartBursts, setHeartBursts] = useState<Array<{ id: number; x: number }>>([]);
@@ -222,7 +229,7 @@ export function WeverseLiveView({ isUserHost, isUserGuest, artistViewer, onLiveA
   const canAdvance = live.status === "live" && !busy && !isPlaying && !isEnding;
 
   return (
-    <div className={styles.liveRoom}>
+    <div ref={liveRootRef} className={styles.liveRoom}>
       <header className={styles.liveWvsHeader}>
         {onLiveActions ? <button type="button" className={styles.liveActionTrigger} aria-label="合播选项" onClick={onLiveActions}><Plus size={20} /></button>
           : isUserGuest ? <span className={styles.liveOnStageLabel}>合播中</span> : <span />}

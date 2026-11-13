@@ -25,8 +25,9 @@ export const SOUND_ITEMS: {
  * 音频来源编辑器：选择音频文件 / 填音频 URL / 试听 / 清除。
  * 只负责编辑传入的 config，不关心它存在全局还是会话里。
  */
-export function ChatSoundSourceEditor({ config, emptyHint, canPreview, onPatch, onPreview }: {
+export function ChatSoundSourceEditor({ config, emptyHint, canPreview, onPatch, onPreview, defaultValue }: {
     config: ChatSoundConfig;
+    defaultValue?: string;
     /** 没有音频时的提示文案（默认“未设置音频”；会话页全局配了音频时提示沿用全局） */
     emptyHint?: string;
     /** 试听按钮是否可用（默认按 config.value 判断；会话页全局也配了音频时允许试听） */
@@ -69,12 +70,12 @@ export function ChatSoundSourceEditor({ config, emptyHint, canPreview, onPatch, 
                     <AudioLines size={14} /> 选择音频文件
                 </button>
                 <span className="chat-sound-source">
-                    {config.sourceType === "file" ? "已用音频文件" : config.sourceType === "url" ? "已用音频 URL" : (emptyHint || "未设置音频")}
+                    {config.value?.startsWith("/sounds/default/") ? "内置默认音效" : config.sourceType === "file" ? "已用音频文件" : config.sourceType === "url" ? "已用音频 URL" : (emptyHint || "未设置音频")}
                 </span>
                 <div className="chat-sound-editor-actions">
                     <button className="ui-btn ui-btn-ghost h-8 w-8 p-0" disabled={!previewEnabled} onClick={onPreview} aria-label="试听" title="试听"><Play size={14} /></button>
                     {hasSource ? (
-                        <button className="ui-btn ui-btn-ghost h-8 w-8 p-0" onClick={() => onPatch({ sourceType: undefined, value: undefined })} aria-label="清除音频" title="清除音频"><X size={14} /></button>
+                        <button className="ui-btn ui-btn-ghost" disabled={!!defaultValue && config.value === defaultValue} onClick={() => onPatch({ sourceType: defaultValue ? "url" : undefined, value: defaultValue })} aria-label={defaultValue ? "恢复默认音效" : "清除音频"} title={defaultValue ? "恢复默认音效" : "清除音频"}>{defaultValue ? "恢复默认" : <X size={14} />}</button>
                     ) : null}
                 </div>
             </div>

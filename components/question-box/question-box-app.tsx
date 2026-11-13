@@ -11,6 +11,7 @@ import { generateBoxAnswers, generateBoxQuestions, generateBoxTopic, translateBo
 import { resolveUserIdentity, USER_IDENTITIES_UPDATED_EVENT } from "@/lib/settings-storage";
 import { emptyBoxState, loadBoxState, newBoxId, saveBoxState, type BoxProfile, type BoxQuestion, type BoxSession, type BoxState, type BoxTopicMode } from "@/lib/question-box-storage";
 import styles from "./question-box-app.module.css";
+import socialStyles from "@/components/social/social.module.css";
 import { DEFAULT_ROLE_SOCIAL_SOURCES } from "@/lib/role-social-sources";
 
 type Page = "home" | "box" | "archive";
@@ -259,7 +260,15 @@ export function QuestionBoxApp({ onClose, onNotice }: { onClose: () => void; onN
       <button className={styles.accordionHead} onClick={() => { setCharactersExpanded(!charactersExpanded); setEditOwner(null); }}>角色资料 <ChevronDown size={16} className={charactersExpanded ? styles.chevronOpen : ""}/></button>
       {charactersExpanded && (characters.length ? characters.map(c => profileEditor(c.id)) : <p className={styles.hint}>还没有引入角色。</p>)}
       <h3>角色关联来源</h3><p className={styles.hint}>逐个角色开启，默认关闭；匿名发问者不会知道私人日历。</p>
-      {characters.map(char => { const source = state.socialSourcesByCharacter[char.id] || DEFAULT_ROLE_SOCIAL_SOURCES; return <div key={`source-${char.id}`} className={styles.profileFields}><strong>{char.name}</strong>{([["includeCalendar", "手机日历"]] as const).map(([key, label]) => <label key={key}><input type="checkbox" checked={source[key]} onChange={event => setState(current => ({ ...current, socialSourcesByCharacter: { ...current.socialSourcesByCharacter, [char.id]: { ...(current.socialSourcesByCharacter[char.id] || DEFAULT_ROLE_SOCIAL_SOURCES), [key]: event.target.checked } } }))} />{label}</label>)}</div>; })}
+      <div className={socialStyles.grid}>{characters.map(char => {
+        const linked = (state.socialSourcesByCharacter[char.id] || DEFAULT_ROLE_SOCIAL_SOURCES).includeCalendar;
+        const avatar = state.profiles[char.id]?.avatarUrl || char.avatar;
+        const nickname = state.profiles[char.id]?.nickname || char.name;
+        return <button key={`source-${char.id}`} type="button" className={socialStyles.person} aria-label={`${nickname}的手机日历`} aria-pressed={linked} onClick={() => setState(current => {
+          const source = current.socialSourcesByCharacter[char.id] || DEFAULT_ROLE_SOCIAL_SOURCES;
+          return { ...current, socialSourcesByCharacter: { ...current.socialSourcesByCharacter, [char.id]: { ...source, includeCalendar: !source.includeCalendar } } };
+        })}><span>{avatar ? <img src={avatar} alt=""/> : char.name.slice(0, 1)}</span><b>{nickname}</b><small>{linked ? "已关联日历" : "未关联日历"}</small></button>;
+      })}</div>
       <p className={styles.hint}>这里的头像、昵称和封面只用于提问箱展示，不修改身份或人设。</p><button className={styles.eraseAll} onClick={eraseAll}><Trash2 size={16}/> 清除所有提问箱数据</button>
     </div></aside></div>}
   </div>;
@@ -271,3 +280,4 @@ function DurationPicker({ value, setValue, custom, setCustom, random = false }: 
 function CountPicker({ value, setValue }: { value: number; setValue: (v: number) => void }) {
   return <div className={styles.field}>每次最多收几题<div className={styles.segment}>{[1, 2, 3, 4, 5].map(count => <button key={count} className={value === count ? styles.selected : ""} onClick={() => setValue(count)}>{count}</button>)}</div><small>这是上限；选 5 题也可能只收到 3 题。</small></div>;
 }
+

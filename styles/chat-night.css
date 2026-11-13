@@ -51,3 +51,46 @@
 .chat-app[data-chat-theme="dark"] :is(.wallet-page-root,.wallet-role-setup) :is(input,select,textarea){background:var(--wallet-soft)!important;color:var(--wallet-text)!important;border-color:var(--wallet-border)!important;color-scheme:dark;}
 .chat-app[data-chat-theme="dark"] :is(.wallet-page-root,.wallet-role-setup) input::placeholder{color:var(--wallet-muted)!important;}
 .chat-app[data-chat-theme="dark"] .wallet-page-root button{color:inherit;}
+
+
+/* 1.6 reviewed public call UI compatibility: append approved call-only styles. */
+/* 046: Video-call glass input must not inherit global Chat dark input fill. */
+.chat-app[data-chat-theme="dark"] .call039-voice-compose input,
+.chat-app[data-chat-theme="light"] .call039-voice-compose input {
+  background:transparent!important;
+  background-color:transparent!important;
+  border-color:transparent!important;
+  box-shadow:none!important;
+  outline:none;
+  -webkit-appearance:none;
+  appearance:none;
+}
+.chat-app[data-chat-theme="dark"] .call039-voice-compose input {
+  color:#f7f5fa!important;
+  caret-color:#f7f5fa;
+}
+.chat-app[data-chat-theme="dark"] .call039-voice-compose input::placeholder {
+  color:#d0c9d5!important;
+  opacity:1;
+}
+.chat-app[data-chat-theme="light"] .call039-voice-compose input {
+  color:#fff!important;
+  caret-color:#fff;
+}
+.chat-app[data-chat-theme="light"] .call039-voice-compose input::placeholder {
+  color:#ece7f0!important;
+  opacity:1;
+}
+/* Match temporary video upload button to Chat light/dark appearance. */
+.chat-app[data-chat-theme="light"] .call039-temp-upload {
+  background:rgba(251,250,254,.83)!important;
+  border-color:rgba(77,65,89,.42)!important;
+  color:#34303b!important;
+  box-shadow:0 2px 9px #00000024;
+}
+.chat-app[data-chat-theme="dark"] .call039-temp-upload {
+  background:rgba(50,46,61,.75)!important;
+  border-color:rgba(255,255,255,.58)!important;
+  color:#fff!important;
+  box-shadow:0 2px 9px #00000034;
+}

@@ -1,4 +1,5 @@
 "use client";
+import { DEFAULT_CHAT_SOUNDS, withDefaultChatSound } from "@/lib/default-notification-sounds";
 import { PhoneLockSettings } from "./phone-lock-settings";
 import { loadVoiceConfigs } from "@/lib/settings-storage";
 
@@ -77,7 +78,7 @@ function ChatSoundsSection() {
     return (
         <div className="menu-group">
             {SOUND_ITEMS.map(({ kind, icon: Icon, label, desc }) => {
-                const config: ChatSoundConfig = sounds[kind] || {};
+                const config: ChatSoundConfig = withDefaultChatSound(kind, sounds[kind]);
                 const enabled = config.enabled === true;
                 return (
                     <div key={kind} className="chat-sound-block">
@@ -92,6 +93,7 @@ function ChatSoundsSection() {
                             <div className="chat-sound-editor">
                                 <ChatSoundSourceEditor
                                     config={config}
+                                    defaultValue={DEFAULT_CHAT_SOUNDS[kind]}
                                     onPatch={patch => changeSound(kind, patch)}
                                     onPreview={() => void previewChatSound(kind)}
                                 />

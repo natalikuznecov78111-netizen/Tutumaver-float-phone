@@ -7,9 +7,11 @@ import { parseCallOutput, SINGLE_CALL_ACTIONS } from "@/lib/call-participation";
 import { useChatCallIdentity, useChatUserAvatar, useGlobalCallAppearance } from "./use-chat-user-avatar";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, deleteChatMessagesByIds, getLatestCharacterStateValues, resolveChatUserAvatar } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, deleteChatMessagesByIds, editChatMessage, getLatestCharacterStateValues, resolveChatUserAvatar } from "@/lib/chat-storage";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
-import { RotateCcw } from "lucide-react";
+import { RotateCcw, Upload, Video, VideoOff, PhoneOff, MessageSquare, MessageSquareOff } from "lucide-react";
+import {Call039Transcript, type Call039Command} from "./call039-transcript";
+import type {Call039Line} from "./call039-shared-ui";
 import { parseStateValues, mergeStateValues } from "@/lib/state-value-parser";
 import { parseAIResponse } from "@/lib/rich-message-parser";
 import { generateChatCompletion, flattenCompletionResult } from "@/lib/chat-engine";
@@ -25,7 +27,7 @@ import type { Character } from "@/lib/character-types";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
 import { CallSttWarningDialog, hideCallSttWarningPermanently, isCallSttWarningHidden } from "./call-stt-warning-dialog";
 import { isAndroidBrowser, isIOSDevice } from "./voice-input-platform";
-import { CallVolumeControl } from "./call-volume-control";
+import { UploadedVideoVolumeControl } from "./call-volume-control";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { useCallScreenSounds } from "@/lib/chat-sound";
 
@@ -89,7 +91,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const [interimText, setInterimText] = useState("");
     const [isMuted, setIsMuted] = useState(false);
     const [isSpeakerMuted, setIsSpeakerMuted] = useState(false);
-    const [inputMode, setInputMode] = useState<"voice" | "text">(() => androidTextInputOnly ? "text" : "voice");
+    const [inputMode, setInputMode] = useState<"voice" | "text">("text");
     const [typedText, setTypedText] = useState("");
     const [composeKind, setComposeKind] = useState<"speech" | "action">("speech");
     const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
@@ -114,6 +116,33 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const messagesRef = useRef<ChatMessage[]>([]);
     const [favoriteLine,setFavoriteLine]=useState<SubtitleEntry|null>(null);
     const lastAssistantTurnIdsRef = useRef<string[]>([]);
+    const pendingRerollIds039 = useRef<string[]>([]);
+    const [transcriptVisible039,setTranscriptVisible039] = useState(true);
+    const [temporaryVideo039,setTemporaryVideo039] = useState<string|null>(null);
+    const [uploadedVideoVolume, setUploadedVideoVolume] = useState(0);
+    const uploadedVideoElement = useRef<HTMLVideoElement|null>(null);
+    const adjustUploadedVideoVolume = (value: number) => {
+        const v = Math.max(0,Math.min(1,value));
+        setUploadedVideoVolume(v);
+        const el=uploadedVideoElement.current;
+        if(el){el.volume=v;el.muted=v===0;if(v>0)void el.play().catch(()=>{});}
+    };
+    const temporaryVideoRef039 = useRef<string|null>(null);
+    const temporaryVideoFile039 = useRef<HTMLInputElement|null>(null);
+    const [uploadNotice039,setUploadNotice039] = useState(false);
+    const uploadApproved039 = useRef(false);
+    const resetTemporaryVideo039 = () => {if(temporaryVideoRef039.current)URL.revokeObjectURL(temporaryVideoRef039.current);temporaryVideoRef039.current=null;setTemporaryVideo039(null);};
+    const acceptTemporaryVideo039 = async (file?:File) => {
+        if(!file)return;
+        if(file.size>20*1024*1024){setCameraError("通话视频不能超过20MB");return;}
+        const url=URL.createObjectURL(file);
+        const sample=document.createElement("video");sample.preload="metadata";sample.src=url;
+        const duration=await new Promise<number>(resolve=>{sample.onloadedmetadata=()=>resolve(sample.duration);sample.onerror=()=>resolve(NaN);setTimeout(()=>resolve(NaN),5000);});
+        if(!Number.isFinite(duration)||duration<=0||duration>15){URL.revokeObjectURL(url);setCameraError("请选择15秒以内的可播放视频");return;}
+        resetTemporaryVideo039();temporaryVideoRef039.current=url;setTemporaryVideo039(url);
+    };
+    useEffect(()=>()=>{if(temporaryVideoRef039.current)URL.revokeObjectURL(temporaryVideoRef039.current);},[]);
+
     const cameraStreamRef = useRef<MediaStream | null>(null);
     const cameraEnabledRef = useRef<boolean>(false);
     const videoElRef = useRef<HTMLVideoElement | null>(null);
@@ -167,6 +196,30 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         setShowSttWarning(true);
     }, [androidTextInputOnly]);
 
+    const call039Edit = (line:Call039Line,original:string,translated:string) => {
+        const current=subtitles.find(item=>item.id===line.id);if(!current)return;
+        const content=current.kind==="action" ? original : original+(translated?" | "+translated:"");
+        editChatMessage(line.id,current.kind==="action"?"【动作】"+content:content);
+        messagesRef.current=messagesRef.current.map(m=>m.id===line.id?{...m,content:current.kind==="action"?"【动作】"+content:content}:m);
+        setSubtitles(prev=>prev.map(item=>item.id===line.id?{...item,text:content}:item));
+        if(originalCallSpeech(current.text)!==original)subtitleAudioCacheRef.current.delete(line.id);
+    };
+    const call039Command = (op:Call039Command,line:Call039Line) => {
+        if(callState!=="IDLE")return;
+        const idx=subtitles.findIndex(item=>item.id===line.id);if(idx<0)return;
+        if(op==="favorite"){const original=subtitles[idx];if(original.kind==="speech")setFavoriteLine(original);return;}
+        if(op==="delete"||op==="delete-after"){
+            const ids=(op==="delete"?[line.id]:subtitles.slice(idx+1).map(item=>item.id));
+            if(ids.length){deleteChatMessagesByIds(session.id,ids);messagesRef.current=messagesRef.current.filter(m=>!ids.includes(m.id));
+              ids.forEach(id=>subtitleAudioCacheRef.current.delete(id));
+              setSubtitles(prev=>prev.filter(item=>!ids.includes(item.id)));}
+            return;
+        }
+        const start=op==="reroll-after"?idx+1:(()=>{let i=idx;while(i>0&&subtitles[i-1].role==="assistant"&&subtitles[i-1].kind&&subtitles[i-1].id!==subtitles[i].id)i--;return i;})();
+        const toReplace=subtitles.slice(start).map(item=>item.id);
+        if(!toReplace.length){void runConversationTurn(false,true);return;}
+        pendingRerollIds039.current=toReplace;void runConversationTurn(true,false);
+    };
     const handleNeverShowSttWarning = useCallback(() => {
         hideCallSttWarningPermanently();
         setShowSttWarning(false);
@@ -468,16 +521,17 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
     const firstSpeakerDone=useRef(false);
     const firstSpeakerChoice=useRef<boolean|null>(null);
-    const runConversationTurn = useCallback(async (reroll = false) => {
+    const runConversationTurn = useCallback(async (reroll = false, manual = false) => {
         setCallState("PROCESSING");
         setInterimText("");
         setReplyError(null);
-        const replacedIds = reroll ? [...lastAssistantTurnIdsRef.current] : [];
+        const replacedIds = reroll ? (pendingRerollIds039.current.length ? [...pendingRerollIds039.current] : [...lastAssistantTurnIdsRef.current]) : [];
+        pendingRerollIds039.current = [];
         const discarded = new Set(replacedIds);
         const history = reroll ? messagesRef.current.filter(message => !discarded.has(message.id)) : messagesRef.current;
 
         try {
-            const frame = captureCameraFrame();
+            const frame = manual ? captureCameraFrame() : null;
             const aiResponseText = flattenCompletionResult(await generateChatCompletion(session, history, {
                 appTags: ["chat", "video"],
                 callFormatInstruction: `${VIDEO_CALL_FORMAT}\n${SINGLE_CALL_ACTIONS}\n通话已接通；若本次通话还没有对话，请按既有关系自然先开口，不假装用户刚说过话。`,
@@ -635,7 +689,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const handleRegenerate = useCallback(() => {
         if (callState !== "IDLE") return;
         if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
-        runConversationTurn();
+        runConversationTurn(false, true);
     }, [callState, runConversationTurn]);
     const handleReroll = useCallback(() => {
         if (callState !== "IDLE" || queuedTurns || !lastAssistantTurnIdsRef.current.length) return;
@@ -675,6 +729,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         if (sttRef.current) { sttRef.current.abort(); sttRef.current = null; }
         if (audioAbortRef.current) { audioAbortRef.current(); audioAbortRef.current = null; }
         stopCameraStream();
+        resetTemporaryVideo039();
         if (window.speechSynthesis) window.speechSynthesis.cancel();
 
         const endMsg = pushChatMessage({
@@ -704,14 +759,14 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
 
     if (minimized) {
         return (
-            <DraggableMediaWindow label={`返回与${callIdentity.name}的视频通话`} onOpen={onRestore} style={{backgroundImage:`url(${bgImageResolved || callIdentity.avatar || ""})`}}><span className="call-mini-window-overlay"/><span className="call-mini-window-name">{callIdentity.name}</span></DraggableMediaWindow>
+            <DraggableMediaWindow label={`返回与${callIdentity.name}的视频通话`} onOpen={onRestore} style={{backgroundImage:`url(${bgImageResolved || ""})`}}><span className="call-mini-window-overlay"/><span className="call-mini-window-name">{callIdentity.name}</span></DraggableMediaWindow>
         );
     }
 
     return (
         <div className="absolute inset-0 z-[100] flex flex-col bg-black text-white overflow-hidden call-keyboard-shift videocall-redesign" style={keyboardOffsetStyle}>
             {favoriteLine && <VoiceFavoriteDialog key={favoriteLine.id} draft={{kind:"call",sourceKey:`${session.id}:video:${favoriteLine.id}`,text:originalCallSpeech(favoriteLine.text),characterId:session.contactId,role:favoriteLine.role,getAudio:async()=>subtitleAudioCacheRef.current.get(favoriteLine.id)}} onClose={()=>setFavoriteLine(null)}/> }
-            <CallVolumeControl />
+            <UploadedVideoVolumeControl volume={uploadedVideoVolume} onChange={adjustUploadedVideoVolume} />
 
             {onMinimize && callState !== "ENDED" && (
                 <button
@@ -738,6 +793,14 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 }}
             />
 
+            {temporaryVideo039&&<video ref={el=>{uploadedVideoElement.current=el;if(el){el.volume=uploadedVideoVolume;el.muted=uploadedVideoVolume===0;}}} className="call039-temp-video" src={temporaryVideo039} autoPlay muted={uploadedVideoVolume===0} loop playsInline />}
+            <input type="file" accept="video/*" ref={temporaryVideoFile039} hidden onChange={e=>{void acceptTemporaryVideo039(e.target.files?.[0]);e.target.value="";}}/>
+            {callState!=="ENDED"&&<button type="button" className="call039-temp-upload" aria-label="临时上传通话视频" title="本次视频通话临时替换画面"
+              onClick={()=>uploadApproved039.current?temporaryVideoFile039.current?.click():setUploadNotice039(true)}><Upload size={18}/></button>}
+            {uploadNotice039&&<div className="call039-disclaimer"><section role="dialog" aria-modal="true" aria-label="视频素材使用须知">
+              <h3>视频素材使用须知</h3><p>本功能展示的视频均由用户自行从本地选择，仅用于虚构视频通话场景的模拟与体验。{"\n\n"}视频画面及互动情节不代表现实人物的真实行为、言论或关系，请勿将虚构内容与现实人物关联，亦请勿上升真人。</p>
+              <footer><button onClick={()=>setUploadNotice039(false)}>取消</button><button onClick={()=>{uploadApproved039.current=true;setUploadNotice039(false);temporaryVideoFile039.current?.click();}}>我已知晓，继续上传</button></footer>
+            </section></div>}
             {/* A single small self picture; the custom call background fills the rest of the screen. */}
             <div className="videocall-self-cam" aria-label="我的通话画面">
                 {cameraEnabled ? (
@@ -772,24 +835,19 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 </div>
             </div>
 
-            {/* Subtitle log — scrollable */}
-            <div
-                ref={subtitlesScrollRef}
-                className="videocall-transcript-viewport"
-            >
-                {subtitles.map(sub => sub.kind === "action" ? <div key={sub.id} className="call-video-action" data-role={sub.role}>{sub.text}</div> :
-                    <CallTranscriptBubble key={sub.id} text={sub.text} onPlay={() => { void playSubtitle(sub); }}
-                        playing={playingSubtitleId === sub.id} disabled={(callState !== "IDLE" && playingSubtitleId !== sub.id) || isSpeakerMuted} role={sub.role} onFavorite={()=>setFavoriteLine(sub)} />)}
-                {interimText && callState === "USER_SPEAKING" && (
-                    <div
-                        className="call-subtitle"
-                        data-interim=""
-                    >
-                        {interimText}
-                    </div>
-                )}
-            </div>
-
+            {transcriptVisible039&&<div className="call039-video-overlay" ref={subtitlesScrollRef}>
+                <Call039Transcript lines={subtitles.map(item=>({...item,kind:item.kind||"speech",speakerName:item.role==="user"?"我":callIdentity.name}))}
+                    showSpeaker playingId={playingSubtitleId} onPlay={line=>{const item=subtitles.find(v=>v.id===line.id);if(item)void playSubtitle(item);}}
+                    onEdit={call039Edit} onCommand={call039Command}/>
+                {interimText&&<div className="call-video-action">{interimText}</div>}
+            </div>}
+            {transcriptVisible039&&callState!=="CONNECTING"&&callState!=="ENDED"&&<div className="call039-voice-compose">
+                <button type="button" className="call039-kind" onClick={()=>setComposeKind(k=>k==="speech"?"action":"speech")} aria-label="切换语言和动作">{composeKind==="speech"?"语":"动"}</button>
+                <input value={typedText} onChange={e=>setTypedText(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Enter"&&!e.nativeEvent.isComposing&&!e.shiftKey){e.preventDefault();handleTextSubmit();}}}
+                  placeholder={composeKind==="speech"?"输入你想说的话，回车发送…":"输入动作，回车发送…"} disabled={callState!=="IDLE"}/>
+                <button type="button" onClick={handleRegenerate} disabled={callState!=="IDLE"} aria-label="召唤角色继续">↑</button>
+            </div>}
             {cameraError && (
                 <div className="videocall-toast" role="status" aria-live="polite">{cameraError}</div>
             )}
@@ -799,47 +857,6 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 </button>
             )}
 
-            {inputMode === "text" && callState !== "CONNECTING" && callState !== "ENDED" && (
-                <form
-                    className={`call-text-input-panel videocall-text-input-panel call-text-input-row${androidTextInputOnly ? " videocall-text-input-panel-android" : ""}`}
-                    onSubmit={(e) => {
-                        e.preventDefault();
-                        handleTextSubmit();
-                    }}
-                >
-                    <div className="call-compose-modes" role="group" aria-label="输入内容类型">
-                        <button type="button" className={composeKind === "speech" ? "selected" : ""} onClick={() => setComposeKind("speech")} aria-pressed={composeKind === "speech"}>消息</button>
-                        <button type="button" className={composeKind === "action" ? "selected" : ""} onClick={() => setComposeKind("action")} aria-pressed={composeKind === "action"}>动作</button>
-                    </div>
-                    <div className="call-text-input-shell">
-                        <input
-                            value={typedText}
-                            onChange={e => setTypedText(e.target.value)}
-                            className="call-text-input"
-                            placeholder="say something..."
-                            disabled={callState !== "IDLE"}
-                        />
-                        <button type="button" className="call-reroll-btn" onClick={handleReroll}
-                            disabled={callState !== "IDLE" || queuedTurns > 0 || !lastAssistantTurnIdsRef.current.length}
-                            aria-label="重回上一轮回复" title="重回上一轮"><RotateCcw size={19} /></button>
-                        <button
-                            type="button"
-                            className="call-text-send-btn"
-                            onClick={handleRegenerate}
-                            aria-disabled={callState !== "IDLE"}
-                            aria-label={queuedTurns ? `召唤回复，已发送 ${queuedTurns} 条` : "召唤回复"}
-                            title="召唤回复"
-                        >
-                            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#192020" strokeWidth="2.3" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M12 19V5" />
-                                <path d="M5 12l7-7 7 7" />
-                            </svg>
-                        </button>
-                    </div>
-                </form>
-            )}
-
-            {inputMode === "voice" && callState !== "CONNECTING" && callState !== "ENDED" && <div className="call-voice-actions"><button type="button" className="call-reroll-btn" onClick={handleReroll} disabled={callState !== "IDLE" || queuedTurns > 0 || !lastAssistantTurnIdsRef.current.length} aria-label="重回上一轮回复" title="重回上一轮"><RotateCcw size={19} /></button><button type="button" className="call-voice-summon" onClick={handleRegenerate} disabled={callState !== "IDLE"} aria-label="召唤回复">↑</button></div>}
             {/* 按住说话提示/错误行 */}
             {holdToTalk && inputMode === "voice" && callState !== "CONNECTING" && callState !== "ENDED" && (
                 <div className="text-center ts-12 opacity-80 px-5 relative z-[1]">
@@ -849,249 +866,16 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 </div>
             )}
 
-            {/* Bottom controls */}
-            <div className={callState !== "ENDED" && callState !== "CONNECTING" && !androidTextInputOnly ? "videocall-controls-gradient videocall-controls-grid" : "videocall-controls-gradient"}>
-                {callState !== "ENDED" && callState !== "CONNECTING" ? androidTextInputOnly ? (
-                    /* 安卓纯文字模式：去掉的只有依赖语音识别的按钮（麦克风静音、语音/文字切换）；
-                       摄像头开关、切换前后摄像头、扬声器静音在安卓完全可用，保留。 */
-                    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 26, width: "100%" }}>
-                        <button
-                            onClick={handleCameraToggle}
-                            className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
-                            {...(cameraEnabled ? { "data-checked": "" } : {})}
-                            aria-label={cameraEnabled ? "关闭摄像头" : "打开摄像头"}
-                            title={cameraEnabled ? "摄像头开启" : "摄像头关闭"}
-                        >
-                            {cameraEnabled ? (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M23 7l-7 5 7 5V7z" />
-                                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                                </svg>
-                            ) : (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <line x1="1" y1="1" x2="23" y2="23" />
-                                    <path d="M16 16V8a2 2 0 0 0-2-2h-8" />
-                                    <path d="M2 7v10a2 2 0 0 0 2 2h11" />
-                                    <path d="M23 7l-7 5 7 5V7z" />
-                                </svg>
-                            )}
-                        </button>
-                        <button
-                            onClick={handleHangup}
-                            className="ui-call-btn ui-call-btn-sm ui-call-btn-danger"
-                            aria-label="挂断"
-                        >
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                                <line x1="23" y1="1" x2="1" y2="23" />
-                            </svg>
-                        </button>
-                        <button
-                            onClick={handleSwitchFacing}
-                            className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
-                            disabled={!cameraEnabled}
-                            aria-label="切换前后摄像头"
-                            title={cameraEnabled ? "切换前后摄像头" : "需先开启摄像头"}
-                        >
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M23 4v6h-6" />
-                                <path d="M1 20v-6h6" />
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                            </svg>
-                        </button>
-                    </div>
-                ) : (
-                    <>
-                        {/* Row 1: mic mute (按住说话模式下改为 Aa 切换) / mic interrupt / camera toggle */}
-                        {holdToTalk ? (
-                            <button
-                                onClick={handleInputModeToggle}
-                                className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
-                                aria-label={inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"}
-                            >
-                                {inputMode === "voice" ? (
-                                    <span className="ui-call-input-text-icon">Aa</span>
-                                ) : (
-                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                        <line x1="12" y1="19" x2="12" y2="22" />
-                                    </svg>
-                                )}
-                            </button>
-                        ) : (
-                            <button
-                                onClick={() => setIsMuted(!isMuted)}
-                                className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
-                                {...(isMuted ? { "data-checked": "" } : {})}
-                                aria-label={isMuted ? "取消静音麦克风" : "静音麦克风"}
-                                title={isMuted ? "麦克风已静音" : "麦克风开启"}
-                            >
-                                {isMuted ? (
-                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <line x1="1" y1="1" x2="23" y2="23" />
-                                        <path d="M9 9v3a3 3 0 0 0 5.12 2.12M15 9.34V4a3 3 0 0 0-5.94-.6" />
-                                        <path d="M17 16.95A7 7 0 0 1 5 12v-2m14 0v2c0 .76-.13 1.48-.35 2.15" />
-                                        <line x1="12" y1="19" x2="12" y2="23" /><line x1="8" y1="23" x2="16" y2="23" />
-                                    </svg>
-                                ) : (
-                                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                        <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                                        <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                        <line x1="12" y1="19" x2="12" y2="22" />
-                                    </svg>
-                                )}
-                            </button>
-                        )}
-
-                        <button
-                            className="ui-call-mic"
-                            {...(holdToTalk && inputMode === "voice" ? { style: { touchAction: "none" as const } } : {})}
-                            data-state={
-                                inputMode === "text" ? "text"
-                                    : holdToTalk
-                                        ? (holdInput.recState === "recording" ? "speaking" : callState === "IDLE" ? "idle" : "busy")
-                                    : callState === "USER_SPEAKING" ? "speaking"
-                                    : callState === "IDLE" ? (isMuted ? "idle-muted" : "idle")
-                                    : "busy"
-                            }
-                            aria-label={
-                                holdToTalk
-                                    ? (inputMode === "text" ? "切换到语音输入" : "按住说话")
-                                    : androidTextInputOnly ? "文字输入" : inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"
-                            }
-                            title={
-                                holdToTalk
-                                    ? (inputMode === "text" ? "切换到语音输入" : "按住说话")
-                                    : androidTextInputOnly ? "安卓浏览器使用文字输入" : inputMode === "voice" ? "切换到文字输入" : "切换到语音输入"
-                            }
-                            {...(holdToTalk && inputMode === "voice"
-                                ? holdInput.pressHandlers
-                                : { onClick: handleInputModeToggle })}
-                        >
-                            {inputMode === "text" ? (
-                                <span className="ui-call-input-text-icon">Aa</span>
-                            ) : (
-                                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M12 2a3 3 0 0 0-3 3v7a3 3 0 0 0 6 0V5a3 3 0 0 0-3-3Z" />
-                                    <path d="M19 10v2a7 7 0 0 1-14 0v-2" />
-                                    <line x1="12" y1="19" x2="12" y2="22" />
-                                </svg>
-                            )}
-                        </button>
-
-                        <button
-                            onClick={handleCameraToggle}
-                            className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
-                            {...(cameraEnabled ? { "data-checked": "" } : {})}
-                            aria-label={cameraEnabled ? "关闭摄像头" : "打开摄像头"}
-                            title={cameraEnabled ? "摄像头开启" : "摄像头关闭"}
-                        >
-                            {cameraEnabled ? (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M23 7l-7 5 7 5V7z" />
-                                    <rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
-                                </svg>
-                            ) : (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <line x1="1" y1="1" x2="23" y2="23" />
-                                    <path d="M16 16V8a2 2 0 0 0-2-2h-8" />
-                                    <path d="M2 7v10a2 2 0 0 0 2 2h11" />
-                                    <path d="M23 7l-7 5 7 5V7z" />
-                                </svg>
-                            )}
-                        </button>
-
-                        {/* Row 2: speaker mute / hangup / switch cam */}
-                        <button
-                            onClick={() => setIsSpeakerMuted((v) => !v)}
-                            className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
-                            {...(isSpeakerMuted ? { "data-checked": "" } : {})}
-                            aria-label={isSpeakerMuted ? "取消扬声器静音" : "静音扬声器"}
-                            title={isSpeakerMuted ? "扬声器已静音" : "扬声器开启"}
-                        >
-                            {isSpeakerMuted ? (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                                    <line x1="23" y1="9" x2="17" y2="15" />
-                                    <line x1="17" y1="9" x2="23" y2="15" />
-                                </svg>
-                            ) : (
-                                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
-                                    <path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07" />
-                                </svg>
-                            )}
-                        </button>
-
-                        <button
-                            onClick={handleHangup}
-                            className="ui-call-btn ui-call-btn-sm ui-call-btn-danger"
-                            aria-label="挂断"
-                        >
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                                <line x1="23" y1="1" x2="1" y2="23" />
-                            </svg>
-                        </button>
-
-                        <button
-                            onClick={handleSwitchFacing}
-                            className="ui-call-btn ui-call-btn-sm ui-call-btn-muted"
-                            disabled={!cameraEnabled}
-                            aria-label="切换前后摄像头"
-                            title={cameraEnabled ? "切换前后摄像头" : "需先开启摄像头"}
-                        >
-                            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M23 4v6h-6" />
-                                <path d="M1 20v-6h6" />
-                                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-                            </svg>
-                        </button>
-                    </>
-                ) : callState === "CONNECTING" && initiator === "character" ? (
-                    /* Incoming call: accept + decline */
-                    <>
-                        <button
-                            onClick={() => {
-                                pushChatMessage({ sessionId: session.id, role: "user", content: `[我拒绝了视频通话]` });
-                                onEnd();
-                            }}
-                            className="ui-call-btn ui-call-btn-danger"
-                        >
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                                <line x1="23" y1="1" x2="1" y2="23" />
-                            </svg>
-                        </button>
-                        <button
-                            onClick={() => setCallState("IDLE")}
-                            className="ui-call-btn ui-call-btn-success"
-                        >
-                            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7A2 2 0 0 1 22 16.92z" />
-                            </svg>
-                        </button>
-                    </>
-                ) : callState === "CONNECTING" ? (
-                    /* User-initiated: show cancel only */
-                    <button
-                        onClick={() => {
-                            pushChatMessage({ sessionId: session.id, role: "user", content: `[我取消了视频通话]` });
-                            onEnd();
-                        }}
-                        className="ui-call-btn ui-call-btn-danger"
-                    >
-                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                            <path d="M10.68 13.31a16 16 0 0 0 3.41 2.6l1.27-1.27a2 2 0 0 1 2.11-.45 12.84 12.84 0 0 0 2.81.7 2 2 0 0 1 1.72 2v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.42 19.42 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72 12.84 12.84 0 0 0 .7 2.81 2 2 0 0 1-.45 2.11L8.09 9.91" />
-                            <line x1="23" y1="1" x2="1" y2="23" />
-                        </svg>
-                    </button>
-                ) : (
-                    <div className="ts-14 opacity-70">通话已结束</div>
-                )}
+            <div className={`call039-video-controls${callState==="CONNECTING" && initiator==="user" ? " call039-video-controls--outgoing" : ""}${callState==="ENDED" ? " call039-video-controls--ended" : ""}`} role="group" aria-label="视频通话控制">
+                {callState==="CONNECTING" && initiator==="character" ? <>
+                    <button type="button" className="hang" onClick={()=>onEnd()} aria-label="拒接"><PhoneOff size={25}/></button>
+                    <button type="button" onClick={()=>setCallState("IDLE")} aria-label="接听"><Video size={24}/></button>
+                </> : callState!=="CONNECTING"&&callState!=="ENDED" ? <>
+                    <button type="button" onClick={handleCameraToggle} aria-label={cameraEnabled?"关闭摄像头":"打开摄像头"}>{cameraEnabled?<Video size={24}/>:<VideoOff size={24}/>}</button>
+                    <button type="button" className="hang" onClick={handleHangup} aria-label="挂断"><PhoneOff size={28}/></button>
+                    <button type="button" onClick={()=>setTranscriptVisible039(x=>!x)} aria-label={transcriptVisible039?"隐藏对话和输入":"显示对话和输入"}>{transcriptVisible039?<MessageSquare size={24}/>:<MessageSquareOff size={24}/>}</button>
+                </> : <button className="hang" onClick={()=>onEnd()} aria-label="取消呼叫"><PhoneOff size={28}/></button>}
             </div>
-
             {!androidTextInputOnly && showSttWarning && (
                 <CallSttWarningDialog
                     onClose={() => setShowSttWarning(false)}

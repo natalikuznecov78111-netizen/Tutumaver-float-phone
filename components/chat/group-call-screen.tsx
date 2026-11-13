@@ -3,10 +3,12 @@ import { loadCallFirstSpeaker } from "@/lib/call-first-speaker";
 import {DraggableMediaWindow} from "@/components/ui/draggable-media-window";
 import { VoiceFavoriteDialog } from "./voice-favorite-dialog";
 import { useEffect, useState, useRef, useCallback } from "react";
-import { ChevronLeft, Users, X, Send, Sparkles, MessageSquare, Mic, PhoneOff, Phone, Volume2 } from "lucide-react";
+import { ChevronLeft, Users, X, Send, Sparkles, MessageSquare, MessageSquareOff, Mic, PhoneOff, Phone, Volume2, Video, VideoOff, Upload } from "lucide-react";
+import {Call039Transcript, type Call039Command} from "./call039-transcript";
+import type {Call039Line} from "./call039-shared-ui";
 import { useGlobalCallAppearance, useChatUserAvatar } from "./use-chat-user-avatar";
 import { VoiceCallLayout, type VoiceCallLine } from "./voice-call-layout";
-import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, deleteChatMessagesByIds, getLatestCharacterStateValues } from "@/lib/chat-storage";
+import { ChatSession, ChatMessage, loadChatMessages, pushChatMessage, deleteChatMessagesByIds, editChatMessage, getLatestCharacterStateValues } from "@/lib/chat-storage";
 import { generateGroupChatCompletion } from "@/lib/group-chat-engine";
 import { parseAIResponse } from "@/lib/rich-message-parser";
 import { getStatusRegionConfig, isCustomStatusRegionActive } from "@/lib/chat-status-region";
@@ -19,7 +21,7 @@ import { groupMemberAvatar, groupMemberName } from "@/lib/group-chat-profile";
 import { CallTranscriptBubble } from "./call-transcript-bubble";
 import { BilingualTextBlock } from "./message-bubble";
 import { useCallKeyboardOffsetStyle } from "./use-call-keyboard-offset";
-import { CallVolumeControl } from "./call-volume-control";
+import { CallVolumeControl, UploadedVideoVolumeControl } from "./call-volume-control";
 import { useCallScreenSounds } from "@/lib/chat-sound";
 import { startIncomingCallVibration } from "@/lib/call-vibration";
 import { createSTTSession, type STTSession } from "@/lib/stt-service";
@@ -69,6 +71,43 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
     const [playingSubtitleId, setPlayingSubtitleId] = useState<string | null>(null);
     const [speakingCharId, setSpeakingCharId] = useState<string | null>(null);
     const [subtitles, setSubtitles] = useState<SubtitleEntry[]>([]);
+    const [transcriptVisible039,setTranscriptVisible039]=useState(true);
+    const [cameraEnabled039,setCameraEnabled039]=useState(false);
+    const cameraStream039=useRef<MediaStream|null>(null);
+    const cameraVideo039=useRef<HTMLVideoElement|null>(null);
+    const [videos039,setVideos039]=useState<Record<string,string>>({});
+    const [uploadedVideoVolume, setUploadedVideoVolume] = useState(0);
+    const uploadedVideoElements = useRef<Record<string,HTMLVideoElement>>({});
+    const adjustUploadedVideoVolume = (value:number) => {
+        const v=Math.max(0,Math.min(1,value));
+        setUploadedVideoVolume(v);
+        for(const el of Object.values(uploadedVideoElements.current)){
+            el.volume=v;el.muted=v===0;
+            if(v>0)void el.play().catch(()=>{});
+        }
+    };
+    const videosRef039=useRef<Record<string,string>>({});
+    const uploadTarget039=useRef<string>("");
+    const uploadFile039=useRef<HTMLInputElement|null>(null);
+    const [uploadPicker039,setUploadPicker039]=useState(false);
+    const [uploadNotice039,setUploadNotice039]=useState(false);
+    const approved039=useRef(false);
+    const pendingReroll039=useRef<string[]>([]);
+    const resetVideo039=()=>{Object.values(videosRef039.current).forEach(u=>URL.revokeObjectURL(u));videosRef039.current={};setVideos039({});};
+    const stopCamera039=()=>{cameraStream039.current?.getTracks().forEach(t=>t.stop());cameraStream039.current=null;setCameraEnabled039(false);};
+    useEffect(()=>()=>{cameraStream039.current?.getTracks().forEach(t=>t.stop());Object.values(videosRef039.current).forEach(u=>URL.revokeObjectURL(u));},[]);
+    useEffect(()=>{if(cameraEnabled039&&cameraVideo039.current&&cameraStream039.current){cameraVideo039.current.srcObject=cameraStream039.current;void cameraVideo039.current.play().catch(()=>{});}},[cameraEnabled039,participantIds.length]);
+    const toggleCamera039=async()=>{if(cameraEnabled039){stopCamera039();return;}try{const stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:"user"},audio:false});cameraStream039.current=stream;setCameraEnabled039(true);}catch{setReplyError("摄像头授权失败，请检查系统权限");}};
+    const captureCamera039=()=>{const v=cameraVideo039.current;if(!cameraEnabled039||!v||!v.videoWidth)return null;const c=document.createElement("canvas");c.width=512;c.height=Math.max(1,Math.round(v.videoHeight*512/v.videoWidth));c.getContext("2d")?.drawImage(v,0,0,c.width,c.height);return c.toDataURL("image/jpeg",0.64);};
+    const uploadThisVideo039=async(file?:File)=>{if(!file)return;if(file.size>20*1024*1024){setReplyError("视频不能超过20MB");return;}
+        const u=URL.createObjectURL(file);const sample=document.createElement("video");sample.preload="metadata";sample.src=u;
+        const duration=await new Promise<number>(resolve=>{sample.onloadedmetadata=()=>resolve(sample.duration);sample.onerror=()=>resolve(NaN);setTimeout(()=>resolve(NaN),5000);});
+        if(!Number.isFinite(duration)||duration<=0||duration>15){URL.revokeObjectURL(u);setReplyError("请选择15秒以内的可播放视频");return;}
+        const key=uploadTarget039.current;if(!key){URL.revokeObjectURL(u);return;}
+        if(videosRef039.current[key])URL.revokeObjectURL(videosRef039.current[key]);
+        videosRef039.current[key]=u;setVideos039(prev=>({...prev,[key]:u}));};
+    const openUpload039=(key:string)=>{uploadTarget039.current=key;setUploadPicker039(false);if(!approved039.current)setUploadNotice039(true);else uploadFile039.current?.click();};
+
     const [roundStarts, setRoundStarts] = useState<Record<string, string>>({});
     const scrollPositions = useRef(new Map<string, number>());
     const [newSpeakerIds, setNewSpeakerIds] = useState<string[]>([]);
@@ -91,7 +130,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
     const holdToTalkRef = useRef(isVideo && !iosDevice && isCallRecordingSupported() && resolveCloudSttConfig() !== null);
     const holdToTalk = holdToTalkRef.current;
     const androidTextInputOnly = isAndroidBrowser() && !holdToTalk;
-    const [inputMode, setInputMode] = useState<"voice" | "text">(!isVideo || androidTextInputOnly ? "text" : "voice");
+    const [inputMode, setInputMode] = useState<"voice" | "text">("text");
     const [isMuted, setIsMuted] = useState(false);
     const [typedText, setTypedText] = useState("");
     const [composeKind, setComposeKind] = useState<"speech" | "action">("speech");
@@ -109,6 +148,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
         endWritten.current = true;
         generationRef.current?.abort();
         stopAudio();
+        stopCamera039();resetVideo039();
         sttRef.current?.abort();
         sttRef.current = null;
         setCallState("ENDED");
@@ -187,7 +227,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
         setInterimText("");
         setCallState("IDLE");
     }, [started, isVideo, session, type, setCallState]);
-    const runConversationTurn = useCallback(async (firstSpeakerId?: string) => {
+    const runConversationTurn = useCallback(async (firstSpeakerId?: string, manual = false) => {
         if (!started || stateRef.current !== "IDLE" || !presentRef.current.length)
             return;
         setCallState("PROCESSING");
@@ -199,13 +239,20 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
         generationRef.current = request;
         try {
             messagesRef.current = loadChatMessages(session.id);
+            const dropped039=[...pendingReroll039.current];
+            const rerollHistory039=messagesRef.current.filter(m=>!dropped039.includes(m.id));
+            const frame039=manual?captureCamera039():null;
             const firstSpeaker = characters.find(character => character.id === firstSpeakerId);
-            const results = await generateGroupChatCompletion(session, messagesRef.current, undefined, {
+            const results = await generateGroupChatCompletion(session, rerollHistory039, undefined, {
                 directorInstruction: firstSpeaker ? `通话刚接通。只由 ${groupMemberName(session, firstSpeaker.id, firstSpeaker)} 先自然开口，其他成员等下一轮。` : undefined,
-                appTags: ["group_chat", type], disableTools: true, skipMemorySummarization: true, callFormatInstruction: isVideo ? VIDEO_CALL_FORMAT : VOICE_CALL_FORMAT, signal: request.signal, activeCall: { id: callIdRef.current, type, participantIds: [...presentRef.current] } });
+                appTags: ["group_chat", type], disableTools: true, skipMemorySummarization: true, callFormatInstruction: isVideo ? VIDEO_CALL_FORMAT : VOICE_CALL_FORMAT, attachedImages: frame039?[frame039]:undefined, signal: request.signal, activeCall: { id: callIdRef.current, type, participantIds: [...presentRef.current] } });
             if (request.signal.aborted || (stateRef.current as string) === "ENDED" || generationRef.current !== request)
                 return;
+            if(results.length&&dropped039.length){deleteChatMessagesByIds(session.id,dropped039);messagesRef.current=messagesRef.current.filter(m=>!dropped039.includes(m.id));
+               dropped039.forEach(id=>subtitleAudioCacheRef.current.delete(id));setSubtitles(prev=>prev.filter(m=>!dropped039.includes(m.id)));}
+            pendingReroll039.current=[];
             const added: SubtitleEntry[] = [], firsts: Record<string, string> = {}, spoke = new Set<string>();
+            const currentBatch039="group-call-039-"+Date.now();
             for (const result of results) {
                 if (request.signal.aborted || (stateRef.current as string) === "ENDED")
                     break;
@@ -466,6 +513,28 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
             if (stateRef.current === "USER_SPEAKING") setCallState("IDLE");
         }
     }, [minimized, callState, inputMode, isMuted, holdInput.cancel]);
+    const group039Edit=(line:Call039Line,original:string,translated:string)=>{
+        const current=subtitles.find(item=>item.id===line.id);if(!current)return;
+        const content=current.kind==="action"?original:original+(translated?" | "+translated:"");
+        const stored=current.kind==="action"?"【动作】"+content:content;
+        editChatMessage(line.id,stored);
+        messagesRef.current=messagesRef.current.map(m=>m.id===line.id?{...m,content:stored}:m);
+        setSubtitles(prev=>prev.map(item=>item.id===line.id?{...item,text:content}:item));
+        if(originalCallSpeech(current.text)!==original)subtitleAudioCacheRef.current.delete(line.id);
+    };
+    const group039Action=(op:Call039Command,line:Call039Line)=>{
+        if(callState!=="IDLE")return;const idx=subtitles.findIndex(item=>item.id===line.id);if(idx<0)return;
+        if(op==="favorite"){if(subtitles[idx].kind!=="action")setFavoriteLine(subtitles[idx]);return;}
+        if(op==="delete"||op==="delete-after"){
+            const ids=op==="delete"?[line.id]:subtitles.slice(idx+1).map(item=>item.id);
+            if(ids.length){deleteChatMessagesByIds(session.id,ids);messagesRef.current=messagesRef.current.filter(m=>!ids.includes(m.id));
+               ids.forEach(id=>subtitleAudioCacheRef.current.delete(id));setSubtitles(prev=>prev.filter(m=>!ids.includes(m.id)));}
+            return;
+        }
+        const start=op==="reroll-after"?idx+1:(()=>{let i=idx;while(i>0&&subtitles[i-1].role==="assistant")i--;return i;})();
+        const ids=subtitles.slice(start).map(item=>item.id);
+        pendingReroll039.current=ids;void runConversationTurn(undefined,false);
+    };
     const renderTextInputPanel = (floating = false) => {
         if (inputMode !== "text" || callState === "CONNECTING" || callState === "ENDED")
             return null;
@@ -493,16 +562,25 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
     if (!started)
         return <div className="gcall-setup-root voicecall-cards"><div className="chat-call-dialog-backdrop"><div className="chat-call-dialog chat-call-member-dialog" role="dialog" aria-modal="true" aria-label="选择通话成员"><header><strong>发起群{callTypeLabel}</strong><button aria-label="取消发起通话" onClick={() => onEnd(false)}><X /></button></header><p>选择本次参与的人 你会默认加入</p>{characters.map(char => <label key={char.id} className="chat-call-member-row"><span className="chat-call-member-avatar">{groupMemberAvatar(char) ? <img src={groupMemberAvatar(char) || ""} alt=""/> : char.name[0]}</span><span>{groupMemberName(session, char.id, char)}</span><input type="checkbox" checked={chosen.includes(char.id)} onChange={e => setChosen(ids => e.target.checked ? [...ids, char.id] : ids.filter(id => id !== char.id))}/></label>)}<button className="chat-call-start" disabled={!chosen.length} onClick={startSelected}>开始通话{chosen.length > 0 ? ` · ${chosen.length + 1}人` : ""}</button></div></div></div>;
     if (minimized)
-        return <DraggableMediaWindow label="返回群通话" onOpen={onRestore} style={{backgroundImage:`url(${voiceBgResolved || session.groupAvatar || effectiveUserAvatar})`}}><span className="call-mini-window-overlay"/><span className="call-mini-window-name">{session.groupName || "群聊"} · {participantIds.length+1}人</span></DraggableMediaWindow>;
+        return <DraggableMediaWindow label="返回群通话" onOpen={onRestore} style={{backgroundImage:`url(${resolvedBgs[participantIds[0]]||voiceBgResolved||""})`}}><span className="call-mini-window-overlay"/><span className="call-mini-window-name">{session.groupName || "群聊"} · {participantIds.length+1}人</span></DraggableMediaWindow>;
     if (isVideo) {
         // Grid: participants + self-cam — auto layout to fit screen
         const totalSlots = activeCharacters.length + 1; // +1 for self
         // Decide columns: 1 col for ≤2, 2 cols for ≤6, 3 cols for more
         const cols = totalSlots <= 2 ? 1 : totalSlots <= 6 ? 2 : 3;
         return (<div className="gcall-video-root voicecall-controls call-keyboard-shift" style={keyboardOffsetStyle}>
-                <CallVolumeControl />
+                {favoriteLine&&<VoiceFavoriteDialog key={favoriteLine.id} draft={{kind:"call",sourceKey:`${session.id}:group:${favoriteLine.id}`,text:originalCallSpeech(favoriteLine.text),characterId:favoriteLine.senderCharacterId||session.contactId,role:favoriteLine.role,getAudio:async()=>subtitleAudioCacheRef.current.get(favoriteLine.id)}} onClose={()=>setFavoriteLine(null)}/>}
+                <input type="file" accept="video/*" hidden ref={uploadFile039} onChange={e=>{void uploadThisVideo039(e.target.files?.[0]);e.target.value="";}}/>
+                {uploadNotice039&&<div className="call039-disclaimer"><section role="dialog" aria-modal="true" aria-label="视频素材使用须知">
+                    <h3>视频素材使用须知</h3><p>本功能展示的视频均由用户自行从本地选择，仅用于虚构视频通话场景的模拟与体验。{"\n\n"}视频画面及互动情节不代表现实人物的真实行为、言论或关系，请勿将虚构内容与现实人物关联，亦请勿上升真人。</p>
+                    <footer><button onClick={()=>setUploadNotice039(false)}>取消</button><button onClick={()=>{approved039.current=true;setUploadNotice039(false);uploadFile039.current?.click();}}>我已知晓，继续上传</button></footer>
+                </section></div>}
+                {uploadPicker039&&<div className="call039-disclaimer"><section><h3>选择本次通话画面</h3>{activeCharacters.map(char=><button key={char.id} style={{display:"block",width:"100%",marginTop:5}} onClick={()=>openUpload039(char.id)}>{groupMemberName(session,char.id,char)}</button>)}<footer><button onClick={()=>setUploadPicker039(false)}>取消</button></footer></section></div>}
+
+                <UploadedVideoVolumeControl volume={uploadedVideoVolume} onChange={adjustUploadedVideoVolume} />
                 <button className="gcall-minimize" onClick={onMinimize} aria-label="缩小通话"><ChevronLeft size={22}/></button>
-                <button className="gcall-members-button" onClick={() => setMembersOpen(true)} aria-label="通话成员和邀请"><Users size={15}/>{activeCharacters.length + 1}</button>
+                <button className="gcall-members-button" style={{right:64}} onClick={() => setMembersOpen(true)} aria-label="通话成员和邀请"><Users size={15}/>{activeCharacters.length + 1}</button>
+                {callState!=="ENDED"&&<button type="button" className="call039-temp-upload" title="上传本次通话成员视频" aria-label="选择成员上传临时视频" onClick={()=>setUploadPicker039(true)}><Upload size={17}/></button>}
                 {/* Video grid */}
                 <div className="flex-1 min-h-0 grid gap-[2px] overflow-hidden" data-cols={cols}>
                     {/* Each character's video tile */}
@@ -510,7 +588,8 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
                 const isSpeaking = speakingCharId === char.id;
                 const tileBg = resolvedBgs[char.id];
                 return (<div key={char.id} className="gcall-video-tile" style={tileBg ? { backgroundImage: `url(${tileBg})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>
-                                {!tileBg && (groupMemberAvatar(char) ? (<img src={groupMemberAvatar(char) || ""} alt={groupMemberName(session, char.id, char)} className={`w-full h-full object-cover transition-opacity duration-300 ${callState === "CONNECTING" ? "gcall-video-avatar-dim" : "gcall-video-avatar-bright"}`}/>) : (<div className="gcall-video-tile-fallback">
+                                {videos039[char.id]&&<video ref={el=>{if(el){uploadedVideoElements.current[char.id]=el;el.volume=uploadedVideoVolume;el.muted=uploadedVideoVolume===0;}else delete uploadedVideoElements.current[char.id];}} src={videos039[char.id]} className="call039-temp-video" autoPlay loop muted={uploadedVideoVolume===0} playsInline/>}
+                                {!tileBg && !videos039[char.id] && (groupMemberAvatar(char) ? (<img src={groupMemberAvatar(char) || ""} alt={groupMemberName(session, char.id, char)} className={`w-full h-full object-cover transition-opacity duration-300 ${callState === "CONNECTING" ? "gcall-video-avatar-dim" : "gcall-video-avatar-bright"}`}/>) : (<div className="gcall-video-tile-fallback">
                                         <span className="ts-40 opacity-60">{groupMemberName(session, char.id, char)?.[0] || "?"}</span>
                                     </div>))}
                                 <div className="gcall-video-tile-name videocall-name">{groupMemberName(session, char.id, char)}</div>
@@ -520,6 +599,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
 
                     {/* Self-cam tile */}
                     <div className="gcall-video-tile-self" style={resolvedBgs["self"] ? { backgroundImage: `url(${resolvedBgs["self"]})`, backgroundSize: "cover", backgroundPosition: "center" } : undefined}>
+                        {cameraEnabled039&&<video ref={cameraVideo039} className="call039-temp-video" muted autoPlay playsInline/>}
                         {!resolvedBgs["self"] && (effectiveUserAvatar ? (<img src={effectiveUserAvatar} alt={userNameRef.current} className="w-full h-full object-cover"/>) : (<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" opacity={0.5}>
                                 <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/>
                                 <circle cx="12" cy="7" r="4"/>
@@ -540,22 +620,30 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
                     </div>
                 </div>
 
-                {/* Subtitle overlay at bottom */}
-                <div className="call-subtitles-log call-subtitles-log-video" ref={subtitleScrollRef}>
-                    {subtitles.map((sub) => sub.kind === "action" ? (<div key={sub.id} className="call-video-action" data-role={sub.role}>{sub.senderName ? `${sub.senderName}：` : ""}{sub.text}</div>) : <div key={sub.id} className="call-subtitle" data-role={sub.role}>
-                            {sub.senderName && <div className="call-subtitle-sender">{sub.senderName}</div>}
-                            <CallTranscriptBubble role={sub.role} text={sub.text} onPlay={() => { void playSubtitle(sub); }} playing={playingSubtitleId === sub.id} disabled={callState !== "IDLE" && playingSubtitleId !== sub.id}/>
-                        </div>)}
-                    {interimText && callState === "USER_SPEAKING" && (<div className="call-subtitle" data-interim="">{interimText}</div>)}
-                </div>
-
-                {renderTextInputPanel(true)}
+                {transcriptVisible039&&<div className="call039-video-overlay" ref={subtitleScrollRef}>
+                    <Call039Transcript lines={subtitles.map(item=>({id:item.id,role:item.role,kind:item.kind||"speech",text:item.text,
+                        speakerName:item.role==="user"?"我":item.senderCharacterId?groupMemberName(session,item.senderCharacterId,characters.find(c=>c.id===item.senderCharacterId)):item.senderName||"成员"}))}
+                        showSpeaker playingId={playingSubtitleId} onPlay={line=>{const sub=subtitles.find(v=>v.id===line.id);if(sub)void playSubtitle(sub);}}
+                        onEdit={group039Edit} onCommand={group039Action}/>
+                    {interimText&&<div className="call-video-action">{interimText}</div>}
+                </div>}
+                {transcriptVisible039&&callState!=="CONNECTING"&&callState!=="ENDED"&&<div className="call039-voice-compose">
+                    <button type="button" className="call039-kind" onClick={()=>setComposeKind(k=>k==="speech"?"action":"speech")} aria-label="语言动作切换">{composeKind==="speech"?"语":"动"}</button>
+                    <input value={typedText} onChange={e=>setTypedText(e.target.value)} placeholder={composeKind==="speech"?"输入语言，回车发送…":"输入动作，回车发送…"}
+                        disabled={callState!=="IDLE"} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();handleTextSubmit();}}}/>
+                    <button type="button" onClick={()=>void runConversationTurn(undefined,true)} disabled={callState!=="IDLE"} aria-label="召唤成员继续">↑</button>
+                </div>}
                 {membersDialog}
-                {replyError && <button className="gcall-video-error" onClick={() => setReplyError(null)}>{replyError}</button>}
-
-                {/* Bottom controls with gradient */}
-                <div className="videocall-controls-gradient">
-                    {renderControls()}
+                {replyError&&<button className="gcall-video-error" onClick={()=>setReplyError(null)}>{replyError}</button>}
+                <div className={`call039-video-controls${callState==="CONNECTING" && initiator==="user" ? " call039-video-controls--outgoing" : ""}`}>
+                    {callState==="CONNECTING" ? <>
+                        <button className="hang" onClick={()=>endCall(true)} aria-label="取消群视频"><PhoneOff size={28}/></button>
+                        {initiator==="character"&&<button onClick={()=>setCallState("IDLE")} aria-label="接听"><Video size={24}/></button>}
+                    </> : callState!=="ENDED" ? <>
+                        <button onClick={()=>void toggleCamera039()} aria-label={cameraEnabled039?"关闭摄像头":"打开摄像头"}>{cameraEnabled039?<Video size={24}/>:<VideoOff size={24}/>}</button>
+                        <button className="hang" onClick={handleHangup} aria-label="挂断"><PhoneOff size={28}/></button>
+                        <button onClick={()=>setTranscriptVisible039(v=>!v)} aria-label={transcriptVisible039?"隐藏对话":"显示对话"}>{transcriptVisible039?<MessageSquare size={24}/>:<MessageSquareOff size={24}/>}</button>
+                    </> : null}
                 </div>
             </div>);
     }

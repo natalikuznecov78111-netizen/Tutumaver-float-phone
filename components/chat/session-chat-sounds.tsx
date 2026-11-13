@@ -5,6 +5,7 @@
 // 解析规则见 lib/chat-storage.ts 的 resolveChatSoundConfig：
 // 会话里显式设置的字段覆盖全局，其余（音频来源、子开关）继承全局。
 
+import { withDefaultChatSound } from "@/lib/default-notification-sounds";
 import { useState, type CSSProperties } from "react";
 import { BellRing } from "lucide-react";
 import {
@@ -90,7 +91,7 @@ export function SessionChatSoundsSection({ session, accent, onUpdate }: {
         <div className="menu-group">
             {SOUND_ITEMS.map(({ kind, icon: Icon, label, desc }) => {
                 const own: ChatSoundConfig = sounds[kind] || {};
-                const globalConfig: ChatSoundConfig = globalSounds[kind] || {};
+                const globalConfig: ChatSoundConfig = withDefaultChatSound(kind, globalSounds[kind]);
                 const mode = soundModeOf(sounds[kind]);
                 const globalOn = globalConfig.enabled === true && Boolean(globalConfig.value);
                 return (

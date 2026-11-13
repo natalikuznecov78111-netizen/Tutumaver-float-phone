@@ -1197,7 +1197,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
     const isPhone = incomingCall.type === "phone" || incomingCall.source === "sms";
     const url = isPhone ? loadPhoneState().ringtoneUrl?.trim() : "";
     let stopRingtone: () => void = () => undefined;
-    if (url && isRingtoneSource(url)) {
+    if (isPhone && loadPhoneState().ringtoneEnabled !== false && url && isRingtoneSource(url)) {
       const audio = new Audio(url);
       audio.loop = true;
       audio.play().catch(() => undefined);
@@ -1328,7 +1328,7 @@ export function DesktopShell({ initialThemeProfile, initialThemeAssets }: Deskto
       }
       sendBrowserNotification(smsContactDisplayName(thread.characterId, character?.name || "短信"), {body:"有新的短信",url:`/#sms=${encodeURIComponent(thread.id)}`,independent:true});
       const url = loadSms().ringtoneUrl?.trim();
-      if (url && isRingtoneSource(url)) { const audio = new Audio(url); void audio.play().catch(() => undefined); }
+      if (loadSms().soundEnabled !== false && url && isRingtoneSource(url)) { const audio = new Audio(url); void audio.play().catch(() => undefined); }
     };
     const onMissed = (event: Event) => {
       const detail = (event as CustomEvent<{name: string; avatar: string | null}>).detail;

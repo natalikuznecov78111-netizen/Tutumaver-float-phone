@@ -7949,9 +7949,8 @@
 .chat-app .kkt-own-avatar,
 .chat-app .kkt-update-avatar,
 .chat-app .kkt-list-page .minimal-avatar-wrapper,
-.chat-app :is(.chat-contact-avatar, .chat-offline-avatar, .add-friend-avatar, .freq-avatar, .freq-detail-avatar, .chat-contact-card-avatar, [data-chat-avatar]),
-.chat-app .chat-msg-avatar:has(> img),
-.chat-app .chat-msg-avatar > div:has(> img),
+/* The message-room avatars are deliberately excluded: user CSS owns their shape. */
+.chat-app :is(.chat-contact-avatar, .chat-offline-avatar, .add-friend-avatar, .freq-avatar, .freq-detail-avatar, .chat-contact-card-avatar, [data-chat-avatar]:not(.chat-msg-avatar):not(.chat-room-layer [data-chat-avatar])),
 .voicecall-cards .chat-call-card-avatar,
 .chat-app .kkt-group-avatar {
   -webkit-mask-image: var(--kkt-avatar-mask);
@@ -8447,3 +8446,118 @@
 .chat-photo-deck-card .chat-photo-card-image,.chat-photo-deck-card .chat-photo-card--image .chat-photo-card-image{object-fit:cover!important;object-position:50% 50%!important}
 .chat-photo-deck--mine{flex-direction:row-reverse}
 .chat-photo-deck:not(.chat-photo-deck--mine){flex-direction:row}
+
+
+/* 1.6 reviewed public call UI compatibility: append approved call-only styles. */
+.call039-transcript{display:flex;flex-direction:column;gap:8px;width:100%;min-height:0}
+.call039-transcript .vc-line{display:flex;flex-direction:column;align-items:flex-start;gap:3px;max-width:100%;width:100%}
+.call039-transcript .vc-speaker-label{font-size:11px;font-weight:650;color:#f7f4fa;text-shadow:0 1px 7px #000c;margin-left:8px}
+.call039-transcript .vc-glass-bubble{display:block;position:relative;touch-action:pan-y;user-select:none;max-width:91%;min-width:115px;padding:7px 9px;border-radius:16px;color:white;background:#625d6aa8;border:1px solid #ffffff36;box-shadow:inset 0 1px #ffffff25,0 4px 16px #0003;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);cursor:pointer}
+.call039-transcript .vc-bubble-main{display:flex;align-items:center;gap:6px}
+.call039-transcript .vc-play{display:grid;place-items:center;flex:0 0 26px;width:26px;height:26px;padding:0;background:#ffffff30;border:0;border-radius:50%;color:white}
+.call039-transcript .vc-original{flex:1;white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;line-height:1.45}
+.call039-transcript .vc-bubble-right{flex:none;color:#ffffffaa;display:flex;align-items:center}
+.call039-transcript .vc-duration{font-size:10px}
+.call039-transcript .vc-translation{border-top:1px solid #ffffff2b;margin:6px 0 0 32px;padding:6px 1px 1px;color:#f2edf6;font-size:11px;line-height:1.45;white-space:pre-wrap;overflow-wrap:anywhere}
+.call039-transcript .vc-line--action{align-items:center!important;padding:5px 4px}
+.call039-transcript .vc-action-text{text-align:center;font-style:italic;font-size:12px;line-height:1.65;text-shadow:0 1px 7px #000d;color:#f5f0f8;max-width:95%;touch-action:pan-y;user-select:none;cursor:pointer}
+.call039-menu-layer{position:fixed;inset:0;z-index:11900;background:transparent}
+.call039-edit-backdrop{position:fixed;inset:0;z-index:11910;background:#0009;display:grid;place-items:center;padding:18px}
+.call039-edit{width:min(360px,95%);border-radius:17px;background:#29262f;color:white;padding:17px;display:flex;flex-direction:column;gap:12px}
+.call039-edit h3{font-size:15px;margin:0}
+.call039-edit label{font-size:12px;display:grid;gap:6px}
+.call039-edit textarea{background:#141218;color:#fff;padding:10px;border:1px solid #ffffff37;border-radius:9px;min-height:67px;resize:vertical}
+.call039-edit-actions{display:flex;justify-content:flex-end;gap:10px}
+.call039-edit-actions button{padding:8px 13px;border:0;border-radius:8px;background:#605967;color:white}
+.call039-edit-actions button:last-child{background:white;color:#202027}
+.call039-voice-compose{position:absolute;bottom:105px;left:18px;right:18px;z-index:16;display:flex;gap:6px;align-items:center;height:46px;padding:5px 6px;background:#3b3744cf;border:1px solid #ffffff44;border-radius:25px;backdrop-filter:blur(7px);-webkit-backdrop-filter:blur(7px)}
+.call039-voice-compose input{flex:1;min-width:0;color:#fff;background:transparent;border:0;outline:0;font-size:12px}
+.call039-voice-compose input::placeholder{color:#c8c1ce}
+.call039-voice-compose button{border:0;display:grid;place-items:center;border-radius:50%;width:34px;height:34px;flex:0 0 34px;background:#f7f6f9;color:#25222a;font-size:22px;font-weight:700}
+.call039-voice-compose .call039-kind{background:#ffffff28;color:white;font-size:13px;font-weight:700}
+.call039-video-controls{position:absolute;z-index:17;bottom:12px;left:32px;right:32px;display:flex;justify-content:space-between;align-items:center}
+.call039-video-controls button{display:grid;place-items:center;flex:none;width:52px;height:52px;border:0;border-radius:50%;color:white;background:#414049ce}
+.call039-video-controls .hang{width:64px;height:64px;background:#fb1738}
+.call039-video-controls--outgoing{justify-content:center}
+.call039-video-overlay{position:absolute;z-index:12;left:14px;right:14px;bottom:167px;max-height:55%;overflow-y:auto;scrollbar-width:none;padding:7px 2px;mask-image:linear-gradient(transparent,#000 11%,#000)}
+.call039-video-overlay::-webkit-scrollbar{display:none}
+.call039-video-overlay[hidden],.call039-voice-compose[hidden]{display:none!important}
+.call039-temp-upload{position:absolute;z-index:25;right:15px;top:calc(var(--chat-call-safe-top,60px) + 7px);width:37px;height:37px;border:1px solid #ffffff8c;border-radius:11px;background:#302c38bd;color:#fff;display:grid;place-items:center}
+.call039-temp-video{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;pointer-events:none}
+.call039-disclaimer{position:fixed;inset:0;z-index:12000;background:#000b;display:grid;place-items:center;padding:20px}
+.call039-disclaimer section{max-width:330px;width:100%;padding:18px 16px;background:#2a2730;border-radius:17px;color:white}
+.call039-disclaimer h3{font-size:16px;margin:0 0 12px}
+.call039-disclaimer p{font-size:12px;line-height:1.75;white-space:pre-wrap}
+.call039-disclaimer footer{display:flex;gap:9px;margin-top:18px}
+.call039-disclaimer button{flex:1;padding:10px 4px;border:0;border-radius:9px;color:white;background:#5b5265;font-size:12px}
+.call039-disclaimer button:last-child{background:#f3eef7;color:#25202a}
+
+/* Call transcripts now reuse Chat's original ctx-menu/ctx-menu-btn component. */
+.call039-native-chat-menu {
+  max-width:calc(100vw - 16px);
+  pointer-events:auto;
+}
+.call039-native-chat-menu .ctx-menu-btn {
+  min-height:32px;
+  touch-action:manipulation;
+}
+/* Voice call: center the red hangup exactly, independently of other buttons. */
+.chat-call-new-controls[data-phase="connected"] {
+  display:grid;
+  grid-template-columns:repeat(5,minmax(0,1fr));
+  justify-items:center;
+}
+.chat-call-new-controls[data-phase="connecting"] {
+  display:flex;
+  justify-content:center;
+  gap:24px;
+}
+.chat-call-new-controls[data-phase="ended"] {
+  justify-content:center;
+}
+
+/* 042: ended video call has a single centered hangup control. */
+.call039-video-controls.call039-video-controls--ended {
+  display:grid;
+  grid-template-columns:minmax(0,1fr);
+  place-items:center;
+  justify-content:center;
+}
+.call039-video-controls.call039-video-controls--ended .hang {
+  margin-inline:auto;
+  justify-self:center;
+}
+/* 042: preserve Chat context-menu skin but use a legible vertical action list. */
+.call039-native-chat-menu {
+  width:min(252px,calc(100vw - 32px));
+  max-width:calc(100vw - 32px);
+  box-sizing:border-box;
+  align-items:stretch;
+  gap:0;
+  padding:6px 0;
+}
+.call039-native-chat-menu > .flex {
+  display:flex;
+  width:100%;
+  min-width:0;
+}
+.call039-native-chat-menu .ctx-menu-btn {
+  display:block;
+  width:100%;
+  min-height:43px;
+  padding:10px 18px;
+  text-align:center;
+  border-right:0;
+  font-size:calc(13px * var(--app-text-scale,1));
+  line-height:1.35;
+  white-space:normal;
+}
+.call039-native-chat-menu > .flex:not(:last-of-type) {
+  border-bottom:1px solid rgba(255,255,255,.1);
+}
+.call039-native-chat-menu .ctx-menu-btn:not(:last-of-type) {
+  border-right:0;
+}
+
+/* 044 approved Chat transcript menu width; keep for 045 navigation test. */
+.call039-native-chat-menu { width:108px!important; min-width:108px!important; max-width:calc(100vw - 32px)!important; }
