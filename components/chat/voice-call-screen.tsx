@@ -1,4 +1,5 @@
 "use client";
+import { SpeechFailureNotice, useSpeechFailure } from "./speech-failure-notice";
 import {DraggableMediaWindow} from "@/components/ui/draggable-media-window";
 import {characterSpeaksFirst} from "@/lib/call-first-speaker";
 import { VoiceFavoriteDialog } from "./voice-favorite-dialog";
@@ -61,7 +62,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const callIdentity = useChatCallIdentity(character, session);
     const effectiveUserAvatar = useChatUserAvatar(session);
     const iosDevice = isIOSDevice();
-    const playCallAudio = iosDevice ? playAudioBlob : playAudioBlobViaMediaElement;
+    const playCallAudio = useCallback((blob: Blob, onStart?: () => void) => iosDevice ? playAudioBlob(blob, onStart, true) : playAudioBlobViaMediaElement(blob, onStart, true), [iosDevice]);
     const keyboardOffsetStyle = useCallKeyboardOffsetStyle();
     const [callState, setRawCallState] = useState<CallState>(answered ? "IDLE" : "CONNECTING");
     const hasConnectedRef = useRef(false);
@@ -79,6 +80,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     const [typedText, setTypedText] = useState("");
     const [bgImageResolved, setBgImageResolved] = useState<string | null>(null);
     const [replyError, setReplyError] = useState<string | null>(null);
+    const { speechFailure, clearSpeechFailure, reportSpeechFailure } = useSpeechFailure();
 
     const sttRef = useRef<{ abort: () => void } | null>(null);
     const audioAbortRef = useRef<(() => void) | null>(null);
@@ -365,17 +367,20 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
         const token = ++audioTokenRef.current;
         sttRef.current?.abort(); sttRef.current = null;
         setCallState("AI_SPEAKING"); setReplyError(null);
+        clearSpeechFailure();
+        let stage: "synthesis" | "playback" = "synthesis";
         try {
             let blob = subtitleAudioCacheRef.current.get(subtitle.id);
             if (!blob) blob = await synthesizeSpeech(originalCallSpeech(subtitle.text), voiceConfig) || undefined;
             if (token !== audioTokenRef.current || (stateRef.current as string) === "ENDED") return;
             if (!blob) throw new Error("语音合成未返回音频");
             subtitleAudioCacheRef.current.set(subtitle.id, blob);
+            stage = "playback";
             let started = false;
             const { promise, abort } = playCallAudio(blob, () => { if (token === audioTokenRef.current && (stateRef.current as string) !== "ENDED") { started = true; setPlayingSubtitleId(subtitle.id); } });
             audioAbortRef.current = abort; await promise;
             if (!started && token === audioTokenRef.current) throw new Error("播放未开始，请重听或检查浏览器音频权限");
-        } catch (error) { if (token === audioTokenRef.current && (stateRef.current as string) !== "ENDED") setReplyError(error instanceof Error ? error.message : "播放失败"); }
+        } catch (error) { if (token === audioTokenRef.current && (stateRef.current as string) !== "ENDED") reportSpeechFailure(stage, error, () => { void playSubtitle(subtitle); }); }
         finally { if (token === audioTokenRef.current) { audioAbortRef.current = null; setPlayingSubtitleId(null); if ((stateRef.current as string) !== "ENDED") setCallState("IDLE"); } }
     }, [session.contactId, playCallAudio, playingSubtitleId, setCallState]);
 
@@ -464,6 +469,7 @@ export function VoiceCallScreen({ session, character, onEnd, onConnect, initiato
     return <div className="absolute inset-0 z-[100] overflow-hidden voicecall-dark voicecall-cards" style={bgImageResolved ? { ...keyboardOffsetStyle, background: `url(${bgImageResolved}) center/cover no-repeat` } : keyboardOffsetStyle}>
         <>
         {favoriteLine && <VoiceFavoriteDialog key={favoriteLine.id} draft={{kind:"call",sourceKey:`${session.id}:voice:${favoriteLine.id}`,text:originalCallSpeech(favoriteLine.text),characterId:session.contactId,role:favoriteLine.role,getAudio:async()=>subtitleAudioCacheRef.current.get(favoriteLine.id)}} onClose={()=>setFavoriteLine(null)}/> }
+        {callState !== "ENDED" && <SpeechFailureNotice failure={speechFailure} onClose={clearSpeechFailure} busy={callState !== "IDLE"}/>}
         <VoiceCallLayout name={callIdentity.name} avatar={callIdentity.avatar} userName={userNameRef.current} userAvatar={effectiveUserAvatar} lines={subtitles} roundStart={roundStart} playingId={playingSubtitleId} state={callState} duration={formatTime(callDuration)} queued={queuedTurns} error={replyError} onClearError={() => setReplyError(null)} onMinimize={onMinimize} onSummon={handleRegenerate} onInput={() => setInputVisible(true)} onHangup={handleHangup} incoming={initiator === "character"} onAccept={() => setCallState("IDLE")} onDecline={decline} onPlay={playSubtitle} onFavorite={id=>setFavoriteLine(subtitles.find(line=>line.id===id)||null)} onRetry={id => void runConversationTurn(id)} onDelete={deleteSubtitle} outputName={outputName} onOutput={() => { void selectCallAudioOutput().then(() => setOutputName("已选设备")).catch(error => setReplyError(error instanceof Error ? error.message : "请在系统中选择播放设备")); }} settings={<><CallVolumeControl/><p>逐句点击喇叭重听 长按台词可重试以下或删除</p><p>输入后点击召唤才生成回复</p></>} input={inputOpen && <div className="chat-call-dialog-backdrop chat-call-input-backdrop" onClick={closeInput}><div className="chat-call-dialog chat-call-input-dialog" style={keyboardOffsetStyle} role="dialog" aria-modal="true" aria-label="通话输入" onClick={e=>e.stopPropagation()}><header><strong>输入消息</strong><button onClick={closeInput} aria-label="关闭输入"><X/></button></header><form onSubmit={e=>{e.preventDefault();handleTextSubmit();}}><textarea autoFocus rows={3} value={typedText} onChange={e=>setTypedText(e.target.value)} onKeyDown={e=>{if(e.key==="Enter" && !e.shiftKey && !e.nativeEvent.isComposing){e.preventDefault();handleTextSubmit();}}} placeholder="说点什么…"/><button type="submit" disabled={!typedText.trim() || callState !== "IDLE"}><Send size={16}/>发送</button></form></div></div>}/></>
     </div>;
 }

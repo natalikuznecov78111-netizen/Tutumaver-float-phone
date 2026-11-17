@@ -1,4 +1,5 @@
 "use client";
+import { SpeechFailureNotice, useSpeechFailure } from "./speech-failure-notice";
 import {DraggableMediaWindow} from "@/components/ui/draggable-media-window";
 import {characterSpeaksFirst} from "@/lib/call-first-speaker";
 import { VoiceFavoriteDialog } from "./voice-favorite-dialog";
@@ -79,7 +80,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const holdToTalk = holdToTalkRef.current;
     const androidTextInputOnlyRef = useRef(isAndroidBrowser() && !holdToTalkRef.current);
     const androidTextInputOnly = androidTextInputOnlyRef.current;
-    const playCallAudio = iosDevice ? playAudioBlob : playAudioBlobViaMediaElement;
+    const playCallAudio = useCallback((blob: Blob, onStart?: () => void) => iosDevice ? playAudioBlob(blob, onStart, true) : playAudioBlobViaMediaElement(blob, onStart, true), [iosDevice]);
     const keyboardOffsetStyle = useCallKeyboardOffsetStyle();
     const [callState, setCallState] = useState<CallState>(answered ? "IDLE" : "CONNECTING");
     const hasConnectedRef = useRef(false);
@@ -100,6 +101,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
     const [cameraFacingMode, setCameraFacingMode] = useState<"user" | "environment">("user");
     const [cameraError, setCameraError] = useState<string | null>(null);
     const [replyError, setReplyError] = useState<string | null>(null);
+    const { speechFailure, clearSpeechFailure, reportSpeechFailure } = useSpeechFailure();
     const [showSttWarning, setShowSttWarning] = useState(false);
 
     const sttRef = useRef<STTSession | null>(null);
@@ -579,17 +581,20 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
         const token = ++audioTokenRef.current;
         sttRef.current?.abort(); sttRef.current = null;
         stateRef.current="AI_SPEAKING";setCallState("AI_SPEAKING");setReplyError(null);
+        clearSpeechFailure();
+        let stage: "synthesis" | "playback" = "synthesis";
         try {
             let blob = subtitleAudioCacheRef.current.get(subtitle.id);
             if (!blob) blob = await synthesizeSpeech(originalCallSpeech(subtitle.text), voiceConfig) || undefined;
             if (token !== audioTokenRef.current || stateRef.current === "ENDED" || minimizedRef.current || isSpeakerMutedRef.current) return;
             if (!blob) throw new Error("语音合成未返回音频");
             subtitleAudioCacheRef.current.set(subtitle.id, blob);
+            stage = "playback";
             let began=false;
             const { promise, abort } = playCallAudio(blob, () => { if(token===audioTokenRef.current && stateRef.current!=="ENDED") { began=true;setPlayingSubtitleId(subtitle.id); } });
             audioAbortRef.current=abort;await promise;
             if(!began && token===audioTokenRef.current)throw new Error("播放未开始，请重听或检查浏览器音频权限");
-        } catch(error) { if(token===audioTokenRef.current && stateRef.current!=="ENDED")setReplyError(error instanceof Error ? error.message : "播放失败"); }
+        } catch(error) { if(token===audioTokenRef.current && stateRef.current!=="ENDED")reportSpeechFailure(stage, error, () => { void playSubtitle(subtitle); }); }
         finally { if(token===audioTokenRef.current) { audioAbortRef.current=null;setPlayingSubtitleId(null);if(stateRef.current!=="ENDED"){stateRef.current="IDLE";setCallState("IDLE");} } }
     }, [session.contactId, playCallAudio, playingSubtitleId]);
 
@@ -793,6 +798,7 @@ export function VideoCallScreen({ session, character, onEnd, onConnect, initiato
                 }}
             />
 
+            {callState !== "ENDED" && <SpeechFailureNotice failure={speechFailure} onClose={clearSpeechFailure} busy={callState !== "IDLE"}/>}
             {temporaryVideo039&&<video ref={el=>{uploadedVideoElement.current=el;if(el){el.volume=uploadedVideoVolume;el.muted=uploadedVideoVolume===0;}}} className="call039-temp-video" src={temporaryVideo039} autoPlay muted={uploadedVideoVolume===0} loop playsInline />}
             <input type="file" accept="video/*" ref={temporaryVideoFile039} hidden onChange={e=>{void acceptTemporaryVideo039(e.target.files?.[0]);e.target.value="";}}/>
             {callState!=="ENDED"&&<button type="button" className="call039-temp-upload" aria-label="临时上传通话视频" title="本次视频通话临时替换画面"

@@ -1,4 +1,5 @@
 "use client";
+import { SpeechFailureNotice, useSpeechFailure } from "./speech-failure-notice";
 import { loadCallFirstSpeaker } from "@/lib/call-first-speaker";
 import {DraggableMediaWindow} from "@/components/ui/draggable-media-window";
 import { VoiceFavoriteDialog } from "./voice-favorite-dialog";
@@ -113,6 +114,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
     const [newSpeakerIds, setNewSpeakerIds] = useState<string[]>([]);
     const [queuedTurns, setQueuedTurns] = useState(0);
     const [replyError, setReplyError] = useState<string | null>(null);
+    const { speechFailure, clearSpeechFailure, reportSpeechFailure } = useSpeechFailure();
     const [outputName, setOutputName] = useState("播放设备");
     const [callDuration, setCallDuration] = useState(0);
     const callStartRef = useRef(0);
@@ -126,7 +128,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
     const keyboardOffsetStyle = useCallKeyboardOffsetStyle();
     const effectiveUserAvatar = useChatUserAvatar(session), globalCallAppearance = useGlobalCallAppearance();
     const iosDevice = isIOSDevice();
-    const playCallAudio = iosDevice ? playAudioBlob : playAudioBlobViaMediaElement;
+    const playCallAudio = useCallback((blob: Blob, onStart?: () => void) => iosDevice ? playAudioBlob(blob, onStart, true) : playAudioBlobViaMediaElement(blob, onStart, true), [iosDevice]);
     const holdToTalkRef = useRef(isVideo && !iosDevice && isCallRecordingSupported() && resolveCloudSttConfig() !== null);
     const holdToTalk = holdToTalkRef.current;
     const androidTextInputOnly = isAndroidBrowser() && !holdToTalk;
@@ -332,6 +334,8 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
         setReplyError(null);
         sttRef.current?.abort();
         sttRef.current = null;
+        clearSpeechFailure();
+        let stage: "synthesis" | "playback" = "synthesis";
         try {
             let blob = subtitleAudioCacheRef.current.get(subtitle.id);
             if (!blob)
@@ -341,6 +345,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
             if (!blob)
                 throw new Error("语音合成未返回音频");
             subtitleAudioCacheRef.current.set(subtitle.id, blob);
+            stage = "playback";
             let began = false;
             const { promise, abort } = playCallAudio(blob, () => { if (token === audioTokenRef.current && (stateRef.current as string) !== "ENDED") {
                 began = true;
@@ -354,7 +359,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
         }
         catch (error) {
             if (token === audioTokenRef.current && (stateRef.current as string) !== "ENDED")
-                setReplyError(error instanceof Error ? error.message : "播放失败");
+                reportSpeechFailure(stage, error, () => { void playSubtitle(subtitle); });
         }
         finally {
             if (token === audioTokenRef.current) {
@@ -633,6 +638,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
                         disabled={callState!=="IDLE"} onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();handleTextSubmit();}}}/>
                     <button type="button" onClick={()=>void runConversationTurn(undefined,true)} disabled={callState!=="IDLE"} aria-label="召唤成员继续">↑</button>
                 </div>}
+                {callState !== "ENDED" && <SpeechFailureNotice failure={speechFailure} onClose={clearSpeechFailure} busy={callState !== "IDLE"}/>}
                 {membersDialog}
                 {replyError&&<button className="gcall-video-error" onClick={()=>setReplyError(null)}>{replyError}</button>}
                 <div className={`call039-video-controls${callState==="CONNECTING" && initiator==="user" ? " call039-video-controls--outgoing" : ""}`}>
@@ -651,7 +657,7 @@ export function GroupCallScreen({ type, session, characters, onEnd, initiator = 
     const selectedLines = subtitles.filter(line => line.role === "user" || line.senderCharacterId === selectedCharacter?.id);
     const deleteSubtitle = (id: string) => { if (callState !== "IDLE" || !subtitles.some(line => line.id === id && line.role === "assistant"))
         return; deleteChatMessagesByIds(session.id, [id]); messagesRef.current = messagesRef.current.filter(message => message.id !== id); subtitleAudioCacheRef.current.delete(id); setSubtitles(lines => lines.filter(line => line.id !== id)); };
-    return <div className="gcall-voice-cards voicecall-cards" style={voiceBgResolved ? { ...keyboardOffsetStyle, background: `url(${voiceBgResolved}) center/cover no-repeat` } : keyboardOffsetStyle}>{favoriteLine&&<VoiceFavoriteDialog key={favoriteLine.id} draft={{kind:"call",sourceKey:`${session.id}:group:${favoriteLine.id}`,text:originalCallSpeech(favoriteLine.text),characterId:favoriteLine.senderCharacterId || session.contactId,role:favoriteLine.role,getAudio:async()=>subtitleAudioCacheRef.current.get(favoriteLine.id)}} onClose={()=>setFavoriteLine(null)}/>}<VoiceCallLayout name={selectedCharacter ? groupMemberName(session, selectedCharacter.id, selectedCharacter) : "通话成员"} avatar="" userName={groupMemberName(session, "self", null, userNameRef.current)} userAvatar={effectiveUserAvatar} lines={selectedLines} roundStart={roundStarts[selectedCharacter?.id || ""] || null} playingId={playingSubtitleId} state={callState} duration={formatTime(callDuration)} queued={queuedTurns} error={replyError} onClearError={() => setReplyError(null)} onMinimize={onMinimize} onSummon={() => void runConversationTurn()} onInput={() => setInputOpen(true)} onHangup={handleHangup} onAccept={() => setCallState("IDLE")} onDecline={() => endCall(true)} incoming={initiator === "character"} onPlay={line => { const subtitle = subtitles.find(item => item.id === line.id); if (subtitle)
+    return <div className="gcall-voice-cards voicecall-cards" style={voiceBgResolved ? { ...keyboardOffsetStyle, background: `url(${voiceBgResolved}) center/cover no-repeat` } : keyboardOffsetStyle}>{favoriteLine&&<VoiceFavoriteDialog key={favoriteLine.id} draft={{kind:"call",sourceKey:`${session.id}:group:${favoriteLine.id}`,text:originalCallSpeech(favoriteLine.text),characterId:favoriteLine.senderCharacterId || session.contactId,role:favoriteLine.role,getAudio:async()=>subtitleAudioCacheRef.current.get(favoriteLine.id)}} onClose={()=>setFavoriteLine(null)}/>}{callState !== "ENDED" && <SpeechFailureNotice failure={speechFailure} onClose={clearSpeechFailure} busy={callState !== "IDLE"}/>}<VoiceCallLayout name={selectedCharacter ? groupMemberName(session, selectedCharacter.id, selectedCharacter) : "通话成员"} avatar="" userName={groupMemberName(session, "self", null, userNameRef.current)} userAvatar={effectiveUserAvatar} lines={selectedLines} roundStart={roundStarts[selectedCharacter?.id || ""] || null} playingId={playingSubtitleId} state={callState} duration={formatTime(callDuration)} queued={queuedTurns} error={replyError} onClearError={() => setReplyError(null)} onMinimize={onMinimize} onSummon={() => void runConversationTurn()} onInput={() => setInputOpen(true)} onHangup={handleHangup} onAccept={() => setCallState("IDLE")} onDecline={() => endCall(true)} incoming={initiator === "character"} onPlay={line => { const subtitle = subtitles.find(item => item.id === line.id); if (subtitle)
         void playSubtitle(subtitle); }} onFavorite={id=>setFavoriteLine(subtitles.find(line=>line.id===id)||null)} onDelete={deleteSubtitle} outputName={outputName} onOutput={() => { void selectCallAudioOutput().then(() => setOutputName("已选设备")).catch(error => setReplyError(error instanceof Error ? error.message : "请在系统中选择播放设备")); }} group={{ count: participantIds.length + 1, title: session.groupName || "群聊", selectedId: selectedCharacter?.id || "", avatars: avatarStrip, onMembers: () => setMembersOpen(true), positions: scrollPositions.current }} settings={<><CallVolumeControl /><p>点击头像切换台词 点击喇叭播放原文</p><p>输入后点击召唤生成回复</p></>} input={<>{membersDialog}{inputOpen && <div className="chat-call-dialog-backdrop chat-call-input-backdrop" onClick={() => setInputOpen(false)}><div className="chat-call-dialog chat-call-input-dialog" role="dialog" aria-modal="true" aria-label="通话输入" style={keyboardOffsetStyle} onClick={e => e.stopPropagation()}><header><strong>输入消息</strong><button aria-label="关闭输入" onClick={() => setInputOpen(false)}><X /></button></header><form onSubmit={e => { e.preventDefault(); handleTextSubmit(); }}><textarea autoFocus rows={3} value={typedText} onChange={e => setTypedText(e.target.value)} onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
         e.preventDefault();
         handleTextSubmit();

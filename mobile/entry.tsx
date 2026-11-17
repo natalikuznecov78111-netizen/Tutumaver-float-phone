@@ -1,3 +1,4 @@
+import { initializeShellLayout } from "@/lib/mobile-shell";
 import {initializeNativeNotifications} from "@/lib/android-notifications";
 import {StorageHealth} from "@/components/storage-health";
 import React from 'react';
@@ -9,5 +10,6 @@ import { ChatReasoningVisibilityController } from '../components/chat-reasoning-
 import { installAndroidRuntime } from '../lib/android-runtime';
 import '../styles/fonts.css';
 import '../app/globals.css';
+initializeShellLayout();
 installAndroidRuntime();initializeNativeNotifications();
 createRoot(document.getElementById('root')!).render(<><CSSImportEnhancer/><ChatPluginBootstrap/><ChatReasoningVisibilityController/><StorageHealth/><MainApp/></>);

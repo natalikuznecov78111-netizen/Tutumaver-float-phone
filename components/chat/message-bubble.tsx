@@ -1,4 +1,5 @@
 "use client";
+import { primeSpeechAudioElement, speechPlaybackError } from "@/lib/tts-service";
 import {TwitterFrozenCard,TwitterSnapshotWindow} from "@/components/twitter/twitter-sharing";
 import { WeverseLiveInviteCard } from "./weverse-live-invite-card";
 import { LivePhotoBubble } from "./live-photo";
@@ -2518,6 +2519,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     const [playing, setPlaying] = useState(false);
     const [synthesizing, setSynthesizing] = useState(false);
     const [synthFailed, setSynthFailed] = useState(false);
+    const [playError, setPlayError] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
     const mountedRef = useRef(true);
     useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
@@ -2532,17 +2534,24 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
         // 必须用 <audio> 元素:iOS 静音拨键会掐掉 Web Audio 的输出(表现为全线
         // 无声),媒体元素不受影响。元素属于宿主页面,锁屏媒体卡片指向站点本身,
         // 点了只会回到 App;播完清 src 让卡片立即撤下。
-        const audio = new Audio(src);
+        const audio = audioRef.current || new Audio();
+        audio.muted = false;
+        audio.src = src;
+        setPlayError(null);
         audioRef.current = audio;
         setPlaying(true);
         const finalize = () => {
             if (audioRef.current === audio) audioRef.current = null;
             try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch { /* ignore */ }
-            setPlaying(false);
+            if (mountedRef.current) setPlaying(false);
+        };
+        const fail = (error?: unknown) => {
+            finalize();
+            if (mountedRef.current) setPlayError(speechPlaybackError(error).message);
         };
         audio.onended = finalize;
-        audio.onerror = finalize;
-        audio.play().catch(finalize);
+        audio.onerror = () => fail();
+        audio.play().catch(fail);
     };
 
     // 点击才合成（不再挂载即合成）：已有音频直接播；没有就现场合成一次，
@@ -2564,6 +2573,11 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
             if (msg.mediaUrl) playSrc(msg.mediaUrl);
             return;
         }
+        // Unlock this exact media element during the click, before awaiting MiniMax.
+        const pendingAudio = new Audio();
+        audioRef.current = pendingAudio;
+        primeSpeechAudioElement(pendingAudio);
+        setPlayError(null);
         setSynthesizing(true);
         setSynthFailed(false);
         synthesizeVoiceForMessage(msg.id, characterId || "", speechText, msg.role === "user")
@@ -2591,7 +2605,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
     });
 
     return (
-        <div className="voice-msg-bubble" onClick={handlePlay}
+        <div className="voice-msg-bubble" onClick={handlePlay} title={playError || undefined}
             style={{ minWidth: `${Math.min(60 + duration * 8, 220)}px` }}
         >
             <div className="voice-msg-icon-shell">
@@ -2614,7 +2628,7 @@ function VoiceMessageBubble({ msg, characterId, onUpdate, defaultTranslationExpa
                     />
                 ))}
             </div>
-            <span className="voice-msg-dur">{synthFailed ? "合成失败·点击重试" : `${duration}"`}</span>
+            <span className="voice-msg-dur">{synthFailed ? "合成失败·点击重试" : playError ? "播放失败·点击重试" : `${duration}"`}</span>
         </div>
     );
 }

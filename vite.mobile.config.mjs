@@ -1,5 +1,5 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'node:path';
-const envKeys=['NEXT_PUBLIC_NETEASE_REAL_IP','NEXT_PUBLIC_DEFAULT_NETEASE_API_BASE','NEXT_PUBLIC_LEGACY_NETEASE_API_BASES','NEXT_PUBLIC_IMAGE_GEN_PROXY_URL','NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_ANON_KEY','NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'];
+const envKeys=['NEXT_PUBLIC_SHELL_CHANNEL','NEXT_PUBLIC_NETEASE_REAL_IP','NEXT_PUBLIC_DEFAULT_NETEASE_API_BASE','NEXT_PUBLIC_LEGACY_NETEASE_API_BASES','NEXT_PUBLIC_IMAGE_GEN_PROXY_URL','NEXT_PUBLIC_SUPABASE_URL','NEXT_PUBLIC_SUPABASE_ANON_KEY','NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY'];
 export default defineConfig({root:'mobile',publicDir:path.resolve('public'),plugins:[react()],resolve:{alias:{'@':path.resolve('.')}},define:{'process.env.NODE_ENV':JSON.stringify('production'),'process.env.NEXT_PUBLIC_SELF_HOSTED_MODE':JSON.stringify('true'),...Object.fromEntries(envKeys.map(k=>[`process.env.${k}`,JSON.stringify(process.env[k]||'')]))},build:{outDir:'../mobile-dist',emptyOutDir:true,sourcemap:false,minify:false,reportCompressedSize:false,chunkSizeWarningLimit:10000,rollupOptions:{output:{manualChunks(id){if(id.includes('node_modules/three/')||id.includes('node_modules/@react-three/'))return 'three';if(id.includes('node_modules/'))return 'vendor';}}}}});

@@ -132,6 +132,7 @@ async function synthesizeMinimax(text: string, config: VoiceApiConfig, emotion?:
             model: config.model || "speech-01-turbo",
             text,
             stream: false,
+            output_format: "hex",
             ...(config.languageBoost ? { language_boost: config.languageBoost } : {}),
             voice_setting: voiceSetting,
             // 44100/256k 是 Minimax 支持的最高档;之前 32000/128k 会把 hd 模型
@@ -151,16 +152,29 @@ async function synthesizeMinimax(text: string, config: VoiceApiConfig, emotion?:
     }
 
     const data = await response.json();
-    if (data.data?.audio) {
-        const hexString: string = data.data.audio;
-        const bytes = new Uint8Array(hexString.length / 2);
-        for (let i = 0; i < hexString.length; i += 2) {
-            bytes[i / 2] = parseInt(hexString.substring(i, i + 2), 16);
-        }
-        return new Blob([bytes], { type: "audio/mpeg" });
+    const code = data.base_resp?.status_code;
+    if (code !== undefined && Number(code) !== 0) {
+        throw new Error(`MiniMax 合成失败（${code}）：${data.base_resp?.status_msg || '未知错误'}`);
     }
-
-    throw new Error(data.base_resp?.status_msg || "Minimax 未返回音频数据");
+    const audio = data.data?.audio;
+    if (typeof audio !== 'string' || !audio.trim()) {
+        throw new Error(data.base_resp?.status_msg && data.base_resp.status_msg !== 'success' ? data.base_resp.status_msg : 'MiniMax 未返回音频数据');
+    }
+    // Some compatible endpoints return a download URL even when hex was requested.
+    if (/^https?:\/\//i.test(audio)) {
+        const download = await fetchWithTimeout(audio, { credentials: 'omit' });
+        if (!download.ok) throw new Error(`MiniMax 音频下载失败（${download.status}）`);
+        const blob = await download.blob();
+        if (!blob.size || /json|text\//i.test(blob.type)) throw new Error('MiniMax 返回的链接不是有效音频');
+        return blob.type ? blob : new Blob([blob], { type: 'audio/mpeg' });
+    }
+    const hex = audio.replace(/\s/g, '');
+    if (!hex.length || hex.length % 2 || !/^[0-9a-f]+$/i.test(hex)) {
+        throw new Error('MiniMax 返回的音频编码无效，请重试');
+    }
+    const bytes = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) bytes[i / 2] = parseInt(hex.slice(i, i + 2), 16);
+    return new Blob([bytes], { type: 'audio/mpeg' });
 }
 
 // ── Fish Audio TTS ───────────────────────────────────
@@ -397,6 +411,21 @@ function silentWavUrl(): string {
     return URL.createObjectURL(new Blob([buffer], { type: "audio/wav" }));
 }
 
+/** Prime the exact element that will play a newly synthesized chat message. */
+export function primeSpeechAudioElement(audio: HTMLAudioElement): void {
+    const url = silentWavUrl();
+    audio.setAttribute('playsinline', '');
+    audio.muted = false;
+    audio.src = url;
+    try { void audio.play().catch(() => {}).finally(() => URL.revokeObjectURL(url)); }
+    catch { URL.revokeObjectURL(url); }
+}
+
+export function speechPlaybackError(error?: unknown): Error {
+    if (error instanceof Error && error.name === 'NotAllowedError') return new Error('播放被浏览器拦截，请点击重试');
+    return new Error('音频播放失败，请检查音量或音频格式后重试');
+}
+
 /**
  * Unlock audio playback. Must run inside (or synchronously from) a user gesture.
  * Resumes the AudioContext (primary path) and unlocks the <audio> fallback.
@@ -476,11 +505,11 @@ function decodeAudio(ctx: AudioContext, data: ArrayBuffer): Promise<AudioBuffer>
  * keep-alive on" bug — the keep-alive's looping silent <audio> was what kept the
  * context alive). Bonus: media-element playback also obeys hardware volume keys.
  */
-export function playAudioBlobViaMediaElement(blob: Blob, onStart?: () => void): { promise: Promise<void>; abort: () => void } {
-    return playAudioBlobElement(blob, onStart);
+export function playAudioBlobViaMediaElement(blob: Blob, onStart?: () => void, reportErrors = false): { promise: Promise<void>; abort: () => void } {
+    return playAudioBlobElement(blob, onStart, reportErrors);
 }
 
-function playAudioBlobElement(blob: Blob, onStart?: () => void): { promise: Promise<void>; abort: () => void } {
+function playAudioBlobElement(blob: Blob, onStart?: () => void, reportErrors = false): { promise: Promise<void>; abort: () => void } {
     const url = URL.createObjectURL(blob);
     const audio = getSharedAudio();
     audio.muted = false;
@@ -489,24 +518,26 @@ function playAudioBlobElement(blob: Blob, onStart?: () => void): { promise: Prom
 
     let settled = false;
     let resolveFn: () => void = () => {};
-    const finalize = () => {
+    let rejectFn: (error: Error) => void = () => {};
+    const finalize = (error?: Error) => {
         if (settled) return;
         settled = true;
         audio.onended = null;
         audio.onerror = null;
         URL.revokeObjectURL(url);
         try { audio.pause(); audio.removeAttribute("src"); audio.load(); } catch {}
-        resolveFn();
+        if (error && reportErrors) rejectFn(error); else resolveFn();
     };
-    const promise = new Promise<void>((resolve) => {
+    const promise = new Promise<void>((resolve, reject) => {
         resolveFn = resolve;
-        audio.onended = finalize;
-        audio.onerror = finalize;
-        audio.play().then(() => { if (!settled) onStart?.(); }).catch(() => {
-            finalize();
+        rejectFn = reject;
+        audio.onended = () => finalize();
+        audio.onerror = () => finalize(speechPlaybackError());
+        audio.play().then(() => { if (!settled) onStart?.(); }).catch((error) => {
+            finalize(speechPlaybackError(error));
         });
     });
-    return { promise, abort: finalize };
+    return { promise, abort: () => finalize() };
 }
 
 /**
@@ -515,12 +546,13 @@ function playAudioBlobElement(blob: Blob, onStart?: () => void): { promise: Prom
  * session back to the microphone (lets SpeechRecognition restart next turn).
  * Returns an abort function to stop playback early. Playback is sequential.
  */
-export function playAudioBlob(blob: Blob, onStart?: () => void): { promise: Promise<void>; abort: () => void } {
+export function playAudioBlob(blob: Blob, onStart?: () => void, reportErrors = false): { promise: Promise<void>; abort: () => void } {
     const ctx = getAudioContext();
-    if (!ctx) return playAudioBlobElement(blob, onStart);
+    if (!ctx) return playAudioBlobElement(blob, onStart, reportErrors);
 
     let settled = false;
     let resolveFn: () => void = () => {};
+    let rejectFn: (error: Error) => void = () => {};
     let source: AudioBufferSourceNode | null = null;
 
     let gain: GainNode | null = null;
@@ -548,8 +580,9 @@ export function playAudioBlob(blob: Blob, onStart?: () => void): { promise: Prom
         resolveFn();
     };
 
-    const promise = new Promise<void>((resolve) => {
+    const promise = new Promise<void>((resolve, reject) => {
         resolveFn = resolve;
+        rejectFn = reject;
         (async () => {
             try {
                 if (ctx.state === "suspended") {
@@ -580,13 +613,16 @@ export function playAudioBlob(blob: Blob, onStart?: () => void): { promise: Prom
                 // 此前这里直接 finalize，正是「语音条有声、通话没声」的来源之一。
                 if (settled) return;
                 cleanupWebAudio();
-                const fallback = playAudioBlobElement(blob, onStart);
+                const fallback = playAudioBlobElement(blob, onStart, reportErrors);
                 fallbackAbort = fallback.abort;
                 void fallback.promise.then(() => {
                     if (settled) return;
                     settled = true;
                     fallbackAbort = null;
                     resolveFn();
+                }, error => {
+                    if (settled) return;
+                    settled = true; fallbackAbort = null; rejectFn(error);
                 });
             }
         })();

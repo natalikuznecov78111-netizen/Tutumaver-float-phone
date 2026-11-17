@@ -1,5 +1,6 @@
 "use client";
 
+import { initializeShellLayout, isMobileShell } from "@/lib/mobile-shell";
 import {isAndroidApp} from "@/lib/android-runtime";
 import { ensureBuiltinAppleFont } from "@/lib/builtin-apple-font";
 import { useEffect, useState } from "react";
@@ -10,7 +11,7 @@ import { CloudBackupScheduler } from "@/components/cloud-backup-scheduler";
 import { MediaMaintenanceScheduler } from "@/components/media-maintenance-scheduler";
 import { DesktopShell } from "./desktop-shell";
 import { OfflinePushRevampAnnouncement } from "./offline-push-revamp-announcement";
-import { PhoneLockScreen } from "./phone-lock-screen";
+import { preparePhoneLockForFirstPaint, type PreparedPhoneLock } from "@/lib/phone-lock-startup";
 import { MusicProvider } from "@/lib/music-context";
 import { startContactRecommendationScheduler } from "@/lib/contact-recommendation";
 import { acknowledgeResourceStartup } from "@/lib/resource-updates";
@@ -152,7 +153,7 @@ async function warmBuiltinFonts(shouldStop: () => boolean): Promise<void> {
   await Promise.all(BUILTIN_FONT_LOAD_SPECS.map((spec) => document.fonts.load(spec).catch(() => [])));
 }
 
-function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: () => void }) {
+function SplashScreen() {
   return (
     <main className="app-root splash-root">
       <section
@@ -162,7 +163,7 @@ function SplashScreen({ ready = false, onEnter }: { ready?: boolean; onEnter?: (
         <div className="phone-case">
           <div className="phone-frame">
             <div className="phone-shell splash-phone-screen">
-              <PhoneLockScreen ready={ready} onEnter={() => onEnter?.()} />
+              <div role="status" style={{ position: "absolute", inset: 0, display: "grid", placeItems: "center", color: "#666" }}>{TEXT.loading}</div>
             </div>
           </div>
         </div>
@@ -223,10 +224,23 @@ async function prepareDesktopThemeForFirstPaint(): Promise<PreparedDesktopTheme>
 export function MainApp() {
   const [preparedDesktopTheme, setPreparedDesktopTheme] = useState<PreparedDesktopTheme | null>(null);
   const [hydrated, setHydrated] = useState(false);
+  const [preparedPhoneLock, setPreparedPhoneLock] = useState<PreparedPhoneLock | null>(null);
   useEffect(() => { if (!hydrated) return; const frame = requestAnimationFrame(() => { void acknowledgeResourceStartup(); }); return () => cancelAnimationFrame(frame); }, [hydrated]);
   const [splashDismissed, setSplashDismissed] = useState(false);
   const [kvHydrateFailed, setKvHydrateFailed] = useState(false);
   const [initAttempt, setInitAttempt] = useState(0);
+
+  useEffect(() => {
+    initializeShellLayout();
+    let lastWidth = window.innerWidth;
+    const onResize = () => {
+      if (window.innerWidth === lastWidth) return;
+      lastWidth = window.innerWidth;
+      initializeShellLayout();
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -248,6 +262,9 @@ export function MainApp() {
       setKvHydrateFailed(false);
       recommendationCleanup = startContactRecommendationScheduler();
 
+      const nextPreparedLock = await preparePhoneLockForFirstPaint();
+      if (cancelled) return;
+
       let nextPreparedTheme: PreparedDesktopTheme | null = null;
       try {
         ensureBuiltinAppleFont();
@@ -258,6 +275,7 @@ export function MainApp() {
 
       if (cancelled) return;
       setPreparedDesktopTheme(nextPreparedTheme);
+      setPreparedPhoneLock(nextPreparedLock);
       setHydrated(true);
       if (hasPendingMcpOAuthCallback()) {
         setSplashDismissed(true);
@@ -265,7 +283,7 @@ export function MainApp() {
     })();
 
     // 安卓全屏兜底。是否请求全屏在每次点击时读取，设置切换后无需重载。
-    const isMobile = window.matchMedia("(max-width: 500px) and (hover: none) and (pointer: coarse)").matches;
+    const isMobile = isMobileShell();
     if (!isMobile) return () => {
       cancelled = true;
       recommendationCleanup?.();
@@ -309,11 +327,13 @@ export function MainApp() {
   return (
     <AccountGate>
       {!hydrated ? (
-        <SplashScreen ready={false} />
+        <SplashScreen />
       ) : (
         <main className="app-root">
           <MusicProvider>
             <DesktopShell
+              initialLockEnabled={preparedPhoneLock?.config.enabled}
+              initialLockWallpaper={preparedPhoneLock?.wallpaper}
               initialThemeProfile={preparedDesktopTheme?.profile}
               initialThemeAssets={preparedDesktopTheme?.assets}
             />
